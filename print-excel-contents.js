@@ -1,16 +1,21 @@
 // Script to print all sheet names and their contents from filter-input-template.xlsx
-import xlsx from 'xlsx';
+import ExcelJS from 'exceljs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const filePath = path.join(__dirname, 'test-data/filter-input-template.xlsx');
-const workbook = xlsx.readFile(filePath);
+const workbook = new ExcelJS.Workbook();
+await workbook.xlsx.readFile(filePath);
 
-console.log('Sheets found:', workbook.SheetNames);
-workbook.SheetNames.forEach(sheetName => {
-  const sheet = workbook.Sheets[sheetName];
-  const data = xlsx.utils.sheet_to_json(sheet, { header: 1 });
-  console.log(`\nSheet: ${sheetName}`);
+const sheetNames = workbook.worksheets.map(ws => ws.name);
+console.log('Sheets found:', sheetNames);
+
+workbook.eachSheet((sheet) => {
+  const data = [];
+  sheet.eachRow(row => {
+    data.push(row.values.slice(1)); // ExcelJS uses 1-based index; slice(1) gives 0-based array
+  });
+  console.log(`\nSheet: ${sheet.name}`);
   console.table(data);
 });
