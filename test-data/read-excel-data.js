@@ -32,6 +32,7 @@ export async function readExcelData(filePath = EXCEL_PATH) {
     marketFeatures: readMarketFeatures(workbook),
     yFactors: readYFactors(workbook),
     yFormula: readYFormula(workbook),
+    bvtScenarios: readBVTScenarios(workbook),
   };
 }
 
@@ -163,12 +164,20 @@ function readYFormula(workbook) {
   if (!sheet) throw new Error('Sheet "Y-Formula" not found in Excel file');
 
   const fieldMap = {
-    'MLS Board':  'mlsBoard',
-    'State':      'state',
-    'County':     'county',
-    'City':       'city',
-    'Zip Code':   'zipCode',
-    'Base Value': 'baseValue',
+    'MLS Board':        'mlsBoard',
+    'State':            'state',
+    'County':           'county',
+    'City':             'city',
+    'Zip Code':         'zipCode',
+    'Base Value':       'baseValue',
+    'View Factor':      'viewFactor',
+    'Condition Factor': 'conditionFactor',
+    'Quality Factor':   'qualityFactor',
+    'Amenities Factor': 'amenitiesFactor',
+    'Access Factor':    'accessFactor',
+    'Appeal Factor':    'appealFactor',
+    'Elevation Factor': 'elevationFactor',
+    'Economic Factor':  'economicFactor',
   };
 
   const result = {};
@@ -187,6 +196,86 @@ function readYFormula(workbook) {
 }
 
 // =====================================================
+// Sheet 5: BVT Scenarios
+// Columns:
+//   A  - Scenario name
+//   B  - Base Value
+//   C/D - Bedrooms Total    (Base Number / Unit Value)
+//   E/F - Bathrooms Total   (Base Number / Unit Value)
+//   G/H - Site Area         (Base Number / Unit Value)
+//   I/J - Finished Sq Ft   (Base Number / Unit Value)
+//   K/L - Year Built        (Base Number / Unit Value)
+//   M/N - Stories           (Base Number / Unit Value)
+//   O/P - Garage Spaces     (Base Number / Unit Value)
+//   Q/R - Fireplaces Total  (Base Number / Unit Value)
+//   S   - Association YN    (Yes / No)
+//   T   - Cooling YN        (Yes / No)
+//   U   - Expected Result   (PASS / FAIL)
+//   V   - Notes
+// =====================================================
+function readBVTScenarios(workbook) {
+  const sheet = workbook.getWorksheet('BVT Scenarios');
+  if (!sheet) return []; // sheet is optional
+
+  const scenarios = [];
+  const factorKeys = [
+    'bedroomsTotal',
+    'bathroomsTotal',
+    'siteArea',
+    'finishedSqFt',
+    'yearBuilt',
+    'stories',
+    'garageSpaces',
+    'fireplacesTotal',
+  ];
+
+  sheet.eachRow((row, rowNumber) => {
+    // Rows 1-2 are headers, row 3 and 11 are separators — skip non-data rows
+    if (rowNumber <= 2) return;
+
+    const scenario = String(row.getCell(1).value || '').trim();
+    // Skip separator rows (they start with 'VALID' or 'INVALID' labels)
+    if (!scenario || scenario.startsWith('VALID') || scenario.startsWith('INVALID')) return;
+
+    const baseValue  = row.getCell(2).value;
+    const expected   = String(row.getCell(23).value || '').trim().toUpperCase(); // W
+    const notes      = String(row.getCell(24).value || '').trim();              // X
+
+    // Read 8 numeric Y-factor pairs (cols C/D, E/F, G/H, I/J, K/L, M/N, O/P, Q/R)
+    const yFactors = {};
+    factorKeys.forEach((key, i) => {
+      const baseNum  = row.getCell(3 + i * 2).value;      // C, E, G, I, K, M, O, Q
+      const unitVal  = row.getCell(3 + i * 2 + 1).value;  // D, F, H, J, L, N, P, R
+      yFactors[key] = {
+        baseNumber: baseNum !== null && baseNum !== undefined ? String(baseNum) : '',
+        unitValue:  unitVal !== null && unitVal !== undefined ? String(unitVal) : '',
+      };
+    });
+
+    // Association YN  — col S (Yes/No) + col T (Unit Value)
+    yFactors.associationYN = {
+      value:     String(row.getCell(19).value || '').trim(), // S
+      unitValue: String(row.getCell(20).value || '').trim(), // T
+    };
+    // Cooling YN — col U (Yes/No) + col V (Unit Value)
+    yFactors.coolingYN = {
+      value:     String(row.getCell(21).value || '').trim(), // U
+      unitValue: String(row.getCell(22).value || '').trim(), // V
+    };
+
+    scenarios.push({
+      scenario,
+      baseValue: baseValue !== null && baseValue !== undefined ? String(baseValue) : '',
+      yFactors,
+      expected,   // 'PASS' or 'FAIL'
+      notes,
+    });
+  });
+
+  return scenarios;
+}
+
+// =====================================================
 // CLI: Run directly to preview data
 // =====================================================
 if (process.argv[1] && process.argv[1].includes('read-excel-data')) {
@@ -200,6 +289,8 @@ if (process.argv[1] && process.argv[1].includes('read-excel-data')) {
     console.log(JSON.stringify(data.yFactors, null, 2));
     console.log('\nY-Formula:');
     console.log(JSON.stringify(data.yFormula, null, 2));
+    console.log('\nBVT Scenarios:');
+    console.log(JSON.stringify(data.bvtScenarios, null, 2));
   }).catch(err => {
     console.error('Error reading Excel:', err.message);
     process.exit(1);

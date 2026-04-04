@@ -1708,7 +1708,7 @@ test.describe('CREX Agent - Complete Property Filter Flow', () => {
   //       → open same property URL → verify each factor updated as:
   //         new_value = (saved_ratio × new_original_opinion_total)
   // ============================================================
-  test('TC-006: should edit Y-Formula and verify opinion values update on property', async ({ page }) => {
+  test.skip('TC-006: should edit Y-Formula and verify opinion values update on property', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
 
     // Load saved ratios from TC-005 output
@@ -2049,5 +2049,727 @@ test.describe('CREX Agent - Complete Property Filter Flow', () => {
 
     console.log('=== TC-006 COMPLETE ===');
   });
+
+  // ============================================================
+  // TC-007: Settings → Search → open property → capture ratios
+  //         → new tab Settings → edit formula (base + factors from Excel)
+  //         → return to property tab → reload → scroll → verify values
+  // ============================================================
+  test('TC-007: should update Y-Formula from Excel and verify property opinion recalculates', async ({ browser }) => {
+    // ── Load BVT Scenarios from Excel ─────────────────────────────────────────
+    const bvtScenarios = excelData.bvtScenarios;
+    if (!bvtScenarios || bvtScenarios.length === 0) throw new Error('No BVT scenarios found in Excel BVT Scenarios sheet');
+    console.log(`\n=== TC-007: Loaded ${bvtScenarios.length} BVT scenario(s) from Excel ===`);
+    bvtScenarios.forEach((s, i) => console.log(`  [${i + 1}] ${s.scenario}  (Base=${s.baseValue}, Expected=${s.expected})`));
+
+    // Each scenario opens its own browser and runs the full flow (~4 min each).
+    // Override the shared 5-minute timeout to allow all scenarios to complete.
+    const MS_PER_SCENARIO = 5 * 60 * 1000; // 5 minutes per scenario (conservative)
+    test.setTimeout(bvtScenarios.length * MS_PER_SCENARIO);
+    console.log(`  Timeout set to ${bvtScenarios.length} × 5 min = ${(bvtScenarios.length * MS_PER_SCENARIO / 60000).toFixed(0)} minutes`);
+
+    // ── STEP 7: Each scenario opens its own browser (open → full flow → close) ─
+    const allScenarioResults = [];
+    for (const scenario of bvtScenarios) {
+      console.log(`\n${'═'.repeat(70)}`);
+      console.log(`  TC-007 SCENARIO: ${scenario.scenario}  (Base=${scenario.baseValue}, Expected=${scenario.expected})`);
+      console.log(`${'═'.repeat(70)}`);
+
+      // ── Open fresh browser context for this scenario ──────────────────────────
+      const scenarioAssertionErrors = []; // collect ALL failures — never throw inside the loop
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+      try {  // try/finally guarantees context.close() even if an assertion or error occurs
+      const page1 = await context.newPage();
+
+      // STEP 1: Login
+      await page1.goto(`${process.env.BASE_URL || 'https://stage.crexagent.com'}/login`);
+      await getLoginLocator(page1, 'emailInput').fill(EMAIL);
+      await getLoginLocator(page1, 'passwordInput').fill(PASSWORD);
+      await getLoginLocator(page1, 'signInButton').click();
+      await page1.waitForURL('**/affiliate-managers', { timeout: 15000 });
+
+      // STEP 2: Settings → Y-Total tab
+      await removeOverlayScrim(page1);
+      await getNavLocator(page1, 'settingsNav').first().click({ force: true });
+      await page1.waitForURL('**/settings**', { timeout: 15000 });
+      await wait(2000);
+      await getYFormulaLocator(page1, 'yTotalTab').first().click({ force: true });
+      await wait(2000);
+
+      // STEP 3: Click Search button on matching formula row
+      console.log('\n=== TC-007: Clicking Search to open Properties page ===');
+      const targetMls    = excelData.yFormula.mlsBoard;
+      const targetState  = excelData.yFormula.state;
+      const targetCounty = excelData.yFormula.county;
+
+      const getMatchingRow = (p) => p.locator('table tbody tr').filter({
+        has: p.locator('td', { hasText: targetMls }),
+      }).filter({
+        has: p.locator('td', { hasText: targetState }),
+      }).filter({
+        has: p.locator('td', { hasText: targetCounty }),
+      }).first();
+
+      const row1 = getMatchingRow(page1);
+      const searchBtn1 = await row1.count() > 0
+        ? row1.locator('td:last-child button:nth-child(3)')
+        : page1.locator('table tbody tr').first().locator('td:last-child button:nth-child(3)');
+
+      await expect(searchBtn1).toBeVisible({ timeout: 10000 });
+      await searchBtn1.click({ force: true });
+      await page1.waitForURL('**/properties**', { timeout: 30000 });
+      await wait(3000);
+      try {
+        await page1.locator('.v-progress-circular, .mdi-loading, [class*="loading"]').first()
+          .waitFor({ state: 'hidden', timeout: 30000 });
+      } catch { /* no spinner */ }
+      await wait(4000);
+
+      // STEP 4: Click blue dot → Select → Set Opinion → read Original Opinion Total
+      console.log('\n=== TC-007: Opening property opinion page ===');
+      const chartRect = await page1.evaluate(() => {
+        const el = document.querySelector('.chart-card') || document.querySelector('[class*="chart-card"]');
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height };
+      });
+
+      if (!chartRect) throw new Error('Chart card not found on properties page');
+
+      const cx = Math.round(chartRect.x + chartRect.width  * 0.35);
+      const cy = Math.round(chartRect.y + chartRect.height * 0.70);
+      await page1.mouse.move(cx, cy);
+      await wait(1000);
+      await page1.mouse.click(cx, cy);
+      await wait(2000);
+
+      // Capture Sold Price & Listing Price from panel text BEFORE navigating to Set Opinion page
+      const panelTextForPrices = await page1.locator('.card-panel, [class*="card-panel"]').first().innerText().catch(() => '');
+      console.log(`  Panel text (for prices): "${panelTextForPrices.replace(/\n/g, ' | ')}"`);
+      const soldPriceMatch    = panelTextForPrices.match(/sold\s*price\s*\n?\s*\$?([\d,.-]+)/i);
+      const listingPriceMatch = panelTextForPrices.match(/listing\s*price\s*\n?\s*\$?([\d,.-]+)/i);
+      const soldPrice    = soldPriceMatch    ? parseFloat(soldPriceMatch[1].replace(/,/g, ''))    : null;
+      const listingPrice = listingPriceMatch ? parseFloat(listingPriceMatch[1].replace(/,/g, '')) : null;
+      console.log(`  Sold Price from panel   : ${soldPrice}`);
+      console.log(`  Listing Price from panel: ${listingPrice}`);
+
+      const selectBtn = page1.locator('button.select-remove-btn').first();
+      if (await selectBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await selectBtn.click({ force: true });
+        await wait(1500);
+      }
+      const setOpinionBtn = page1.locator('button:has-text("Set Opinion")').first();
+      if (await setOpinionBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await setOpinionBtn.click({ force: true });
+        await page1.waitForURL(/properties.*\/\d+|property-detail|set-opinion/i, { timeout: 20000 }).catch(() => {});
+        await wait(4000);
+      }
+
+      const propertyUrl = page1.url();
+      console.log(`Property URL: ${propertyUrl}`);
+
+      // STEP 5: Capture Original Opinion Total from property page
+      console.log('\n=== TC-007: Capturing Original Opinion Total before formula edit ===');
+      const findValueNearLabel = async (p, labelRegex) => {
+        return await p.evaluate((re) => {
+          const allEls = [...document.querySelectorAll('*')];
+          const labelEl = allEls.find(el =>
+            new RegExp(re, 'i').test(el.innerText?.trim()) &&
+            el.children.length < 4 &&
+            el.tagName !== 'BODY' && el.tagName !== 'HTML'
+          );
+          if (!labelEl) return null;
+          const parent = labelEl.parentElement;
+          if (parent) {
+            const siblings = [...parent.children];
+            const idx = siblings.indexOf(labelEl);
+            for (let i = idx + 1; i < siblings.length; i++) {
+              const text = siblings[i].innerText?.trim().replace(/[$,\s]/g, '');
+              if (text && /^-?[\d.]+$/.test(text)) return parseFloat(text);
+            }
+            const pNext = parent.nextElementSibling;
+            if (pNext) {
+              const text = pNext.innerText?.trim().replace(/[$,\s]/g, '');
+              if (text && /^-?[\d.]+$/.test(text)) return parseFloat(text);
+            }
+          }
+          return null;
+        }, labelRegex.source);
+      };
+
+      const originalOpinionTotal = await findValueNearLabel(page1, /^original\s+opinion\s+total$/i);
+      const originalYTotal       = await findValueNearLabel(page1, /^original\s+y\s+total$/i);
+      const opinionTotal         = await findValueNearLabel(page1, /^opinion\s+total$/i);
+
+      console.log(`  Original Opinion Total : ${originalOpinionTotal}`);
+      console.log(`  Original Y Total       : ${originalYTotal}`);
+      console.log(`  Opinion Total          : ${opinionTotal}`);
+
+      // ── ASSERTION: BEFORE update — originalOpinionTotal = soldPrice - originalYTotal
+      // soldPrice captured from panel text above (before navigating to Set Opinion page)
+      console.log('\n─────────────────────────────────────────────────────────────────');
+      console.log('  TC-007: BEFORE UPDATE — Original Opinion Total assertion');
+      console.log(`  Sold Price       : ${soldPrice}`);
+      console.log(`  Original Y Total : ${originalYTotal}`);
+      if (soldPrice !== null && originalYTotal !== null) {
+        const expectedOOT_before = parseFloat((soldPrice - originalYTotal).toFixed(4));
+        const diffBefore = Math.abs(originalOpinionTotal - expectedOOT_before);
+        const matchBefore = diffBefore < 0.01;
+        console.log(`  Formula          : ${soldPrice} - ${originalYTotal} = ${expectedOOT_before}`);
+        console.log(`  Actual on page   : ${originalOpinionTotal}`);
+        if (matchBefore) {
+          console.log(`  ✓  BEFORE UPDATE: Original Opinion Total matches formula (${originalOpinionTotal})`);
+        } else {
+          console.log(`  ❌ BEFORE UPDATE: Mismatch — expected ${expectedOOT_before}, got ${originalOpinionTotal}, diff ${diffBefore.toFixed(6)}`);
+        }
+        if (!matchBefore) {
+          scenarioAssertionErrors.push(
+            `BEFORE UPDATE: Original Opinion Total mismatch — expected ${soldPrice} - ${originalYTotal} = ${expectedOOT_before}, got ${originalOpinionTotal} (diff ${diffBefore.toFixed(6)})`
+          );
+        }
+      } else {
+        console.log(`  ⚠  BEFORE UPDATE: Could not read Sold Price — skipping assertion`);
+      }
+      console.log('─────────────────────────────────────────────────────────────────\n');
+
+      // STEP 6: Read each factor's current value and compute saved ratios
+      const factorNames = ['View', 'Condition', 'Quality', 'Amenities', 'Access', 'Appeal', 'Elevation', 'Economic'];
+      const currentFactors = {};
+      for (const name of factorNames) {
+        const input = page1.locator(`input[placeholder*="${name}" i]`).first();
+        const val = await input.inputValue().catch(() => null);
+        currentFactors[name] = val !== null ? (parseFloat(val) || 0) : 0;
+      }
+
+      console.log('\n=== TC-007: Saving ratios (factor / originalOpinionTotal) ===');
+      const savedRatios = {};
+      for (const [name, val] of Object.entries(currentFactors)) {
+        savedRatios[name] = originalOpinionTotal && originalOpinionTotal !== 0
+          ? parseFloat((val / originalOpinionTotal).toFixed(6))
+          : 0;
+        console.log(`  ${name.padEnd(12)}: ${val} / ${originalOpinionTotal} = ${savedRatios[name]}`);
+      }
+
+      const newBaseValue = scenario.baseValue;
+      const bvtYFactors  = scenario.yFactors; // { bedroomsTotal:{baseNumber,unitValue}, ..., associationYN:{value,unitValue}, coolingYN:{value,unitValue} }
+
+      console.log('\n=== TC-007: Opening Settings in new tab to edit formula ===');
+    const page2 = await context.newPage();
+    await page2.goto(`${process.env.BASE_URL || 'https://stage.crexagent.com'}/settings?tab=ytotal`);
+    await wait(3000);
+    await getYFormulaLocator(page2, 'yTotalTab').first().click({ force: true }).catch(() => {});
+    await wait(2000);
+
+    // STEP 8: Click Edit icon on matching row in page2
+    console.log('\n=== TC-007: Clicking Edit icon in Settings tab ===');
+    const row2 = getMatchingRow(page2);
+    const editBtn = await row2.count() > 0
+      ? row2.locator('td:last-child button:nth-child(1)')
+      : page2.locator('table tbody tr').first().locator('td:last-child button:nth-child(1)');
+
+    await expect(editBtn).toBeVisible({ timeout: 10000 });
+    await editBtn.click({ force: true });
+    await wait(3000);
+    await page2.screenshot({ path: 'screenshots/tc007-edit-dialog.png' });
+
+    // STEP 9: Update Base Value from Excel
+    console.log(`\n=== TC-007: Updating Base Value to ${newBaseValue} ===`);
+
+    // Debug: dump all inputs inside the active overlay to find the right selectors
+    const dialogInputsDebug = await page2.evaluate(() => {
+      const overlay = document.querySelector('.v-overlay--active, [role="dialog"]');
+      if (!overlay) return { found: false, overlays: [...document.querySelectorAll('.v-overlay--active')].length };
+      const inputs = [...overlay.querySelectorAll('input, textarea')];
+      return {
+        found: true,
+        overlayClass: overlay.className?.slice(0, 60),
+        inputs: inputs.map(el => ({
+          type: el.type, placeholder: el.placeholder, value: el.value,
+          label: el.closest('.v-field, .v-input')?.querySelector('label, .v-label')?.innerText?.trim() || '',
+        })),
+      };
+    });
+    console.log('  Dialog inputs debug:', JSON.stringify(dialogInputsDebug, null, 2));
+
+    // Use .v-overlay--active as container (like TC-005 photo dialogs)
+    const dialogOverlay = page2.locator('.v-overlay--active').first();
+    const allDialogInputs = dialogOverlay.locator('input');
+    const inputCount = await allDialogInputs.count();
+    console.log(`  Total inputs in overlay: ${inputCount}`);
+
+    // Find base value input by label proximity — look for the one labelled "Base Value"
+    let baseInputFilled = false;
+    for (let i = 0; i < inputCount; i++) {
+      const inp = allDialogInputs.nth(i);
+      const lb = await inp.evaluate(el => {
+        const field = el.closest('.v-field, .v-input, [class*="field"]');
+        return field?.querySelector('label, .v-label')?.innerText?.trim() || '';
+      }).catch(() => '');
+      const ph = await inp.getAttribute('placeholder').catch(() => '') || '';
+      if (/base\s*value/i.test(lb) || /base/i.test(ph)) {
+        const cur = await inp.inputValue();
+        await inp.click({ force: true });
+        await inp.fill(newBaseValue);
+        await wait(300);
+        console.log(`  Base Value: "${cur}" → "${newBaseValue}" (label: "${lb}")`);
+        baseInputFilled = true;
+        break;
+      }
+    }
+    // Fallback: fill the first number input if base not found by label
+    if (!baseInputFilled && inputCount > 0) {
+      const firstInp = allDialogInputs.first();
+      const cur = await firstInp.inputValue();
+      await firstInp.click({ force: true });
+      await firstInp.fill(newBaseValue);
+      await wait(300);
+      console.log(`  Base Value (fallback first input): "${cur}" → "${newBaseValue}"`);
+    }
+
+    // STEP 10: Navigate to next step to reach factor value fields
+    console.log('\n=== TC-007: Navigating to next wizard step for factor values ===');
+    const nextBtn = dialogOverlay.locator('button:has-text("Next"), button:has-text("Continue")').first();
+    const nextVisible = await nextBtn.isVisible({ timeout: 5000 }).catch(() => false);
+    if (nextVisible) {
+      await nextBtn.click({ force: true });
+      await wait(2000);
+      console.log('  Clicked Next — on factor values step');
+      await page2.screenshot({ path: 'screenshots/tc007-factor-step.png' });
+    } else {
+      console.log('  Next button not found — may already be on factor step or dialog structure differs');
+    }
+
+    // ── STEP 10b: Click "Y Factor" tab directly (3rd tab in dialog) ────────────
+    console.log('\n=== TC-007: Clicking Y Factor tab ===');
+    const yFactorTab = dialogOverlay.locator('button:has-text("Y Factor"), [role="tab"]:has-text("Y Factor")').first();
+    if (await yFactorTab.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await yFactorTab.click({ force: true });
+      await wait(2000);
+      console.log('  Y Factor tab clicked');
+      await page2.screenshot({ path: 'screenshots/tc007-yfactor-tab.png' });
+    } else {
+      console.log('  Y Factor tab not found — filling on current step');
+    }
+
+    // ── STEP 10c: Fill 8 numeric Y-Factor rows (Base Number + Unit Value by index) ──
+    // Dialog rows (in order): Bedrooms Total, Bathrooms Total, Site Area, Finished Sq Ft,
+    //                          Year Built, Stories, Garage Spaces, Fireplaces Total
+    console.log('\n=== TC-007: Filling Y-Factor Base Number + Unit Value fields ===');
+    const numericFactorOrder = [
+      'bedroomsTotal', 'bathroomsTotal', 'siteArea', 'finishedSqFt',
+      'yearBuilt', 'stories', 'garageSpaces', 'fireplacesTotal',
+    ];
+    const factorLabels = [
+      'Bedrooms Total', 'Bathrooms Total', 'Site Area', 'Finished Sq Ft',
+      'Year Built', 'Stories', 'Garage Spaces', 'Fireplaces Total',
+    ];
+
+    for (let i = 0; i < numericFactorOrder.length; i++) {
+      const key    = numericFactorOrder[i];
+      const label  = factorLabels[i];
+      const fData  = bvtYFactors[key] || { baseNumber: '', unitValue: '' };
+      const baseNum = String(fData.baseNumber || '');
+      const unitVal = String(fData.unitValue  || '');
+
+      if (!baseNum && !unitVal) {
+        console.log(`  ${label.padEnd(20)}: skipped (empty in BVT sheet)`);
+        continue;
+      }
+
+      // Scroll the nth "Enter base number" input into view and fill
+      await page2.evaluate((idx) => {
+        const inputs = document.querySelectorAll('.v-overlay--active input[placeholder="Enter base number"]');
+        const target = inputs[idx];
+        if (!target) return;
+        let el = target.parentElement;
+        while (el && !el.classList.contains('v-dialog') && !el.classList.contains('v-overlay__content')) {
+          if (el.scrollHeight > el.clientHeight) {
+            const tr = target.getBoundingClientRect();
+            const cr = el.getBoundingClientRect();
+            el.scrollTop = Math.max(0, tr.top - cr.top + el.scrollTop - 80);
+            break;
+          }
+          el = el.parentElement;
+        }
+      }, i);
+      await wait(300);
+
+      const baseInput = dialogOverlay.locator('input[placeholder="Enter base number"]').nth(i);
+      if (await baseInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await baseInput.click({ force: true });
+        await wait(200);
+        await baseInput.fill(baseNum);
+        await baseInput.press('Tab'); // Tab triggers blur → unlocks Unit Value input
+        await wait(500);
+        console.log(`  ${label.padEnd(20)} Base#: "${baseNum}"`);
+      } else {
+        console.log(`  ${label.padEnd(20)}: Enter base number input [${i}] not visible`);
+        continue;
+      }
+
+      // Fill Unit Value — nth "Enter unit value" input (unlocked after Tab on base)
+      const unitInput = dialogOverlay.locator('input[placeholder="Enter unit value"]').nth(i);
+      if (await unitInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await unitInput.click({ force: true });
+        await wait(200);
+        await unitInput.fill(unitVal);
+        await wait(300);
+        console.log(`  ${label.padEnd(20)} Unit : "${unitVal}"`);
+      } else {
+        console.log(`  ${label.padEnd(20)}: Enter unit value input [${i}] not visible (may need base number first)`);
+      }
+    }
+
+    // ── STEP 10d: Handle Association YN + Cooling YN (Yes/No + Unit Value) ─────
+    // Note: If Yes/No is selected, the Unit Value field MUST be filled (both are required together)
+    const ynFields = [
+      { key: 'associationYN', label: 'Association YN', dropdownIndex: 0 },
+      { key: 'coolingYN',     label: 'Cooling YN',     dropdownIndex: 1 },
+    ];
+
+    for (const ynField of ynFields) {
+      const ynData    = bvtYFactors[ynField.key] || {};
+      const ynValue   = String(ynData.value     || '').trim();
+      const ynUnit    = String(ynData.unitValue  || '').trim();
+
+      if (!ynValue) {
+        console.log(`  ${ynField.label.padEnd(20)}: skipped (no value in BVT sheet)`);
+        continue;
+      }
+
+      console.log(`  ${ynField.label.padEnd(20)} Yes/No: "${ynValue}", Unit: "${ynUnit}"`);
+
+      // Click the Yes/No dropdown (nth "Select Yes or No" input)
+      const ynInput = dialogOverlay.locator('input[placeholder="Select Yes or No"]').nth(ynField.dropdownIndex);
+      if (await ynInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await ynInput.click({ force: true });
+        await wait(1000);
+        // Select the matching option from the dropdown
+        const option = page2.locator('.v-overlay--active .v-list-item, .v-list-item').filter({ hasText: new RegExp(`^${ynValue}$`, 'i') }).first();
+        if (await option.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await option.click({ force: true });
+          await wait(500);
+          console.log(`    Selected: "${ynValue}"`);
+        } else {
+          // Fallback: type the value
+          await ynInput.fill(ynValue);
+          await wait(500);
+        }
+      } else {
+        console.log(`  ${ynField.label}: Yes/No input not visible`);
+        continue;
+      }
+
+      // Fill Unit Value (required when Yes/No selected)
+      if (ynUnit) {
+        // The unit input for YN rows uses placeholder "Enter base number first" initially,
+        // then changes to "Enter base number" once a Yes/No is selected
+        const ynUnitInput = dialogOverlay.locator(
+          'input[placeholder="Enter base number"]:not([placeholder="Enter base value"])'
+        ).nth(numericFactorOrder.length + ynField.dropdownIndex);
+        if (await ynUnitInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+          await ynUnitInput.click({ force: true });
+          await wait(200);
+          await ynUnitInput.fill(ynUnit);
+          await wait(300);
+          console.log(`    Unit value filled: "${ynUnit}"`);
+        } else {
+          console.log(`    ⚠  Unit value input not visible — Yes/No may not have unlocked it yet`);
+        }
+      } else if (ynValue.toLowerCase() === 'yes' || ynValue.toLowerCase() === 'no') {
+        console.log(`    ⚠  Note: "${ynField.label}" = "${ynValue}" but Unit Value is empty in BVT sheet — both fields are required`);
+      }
+    }
+
+    await page2.screenshot({ path: 'screenshots/tc007-after-factor-edit.png' });
+
+    // STEP 11: Save the formula
+    console.log('\n=== TC-007: Saving updated formula ===');
+    const saveBtn = dialogOverlay.locator('button:has-text("Save"), button:has-text("Update")').last();
+    const saveBtnVisible = await saveBtn.isVisible({ timeout: 5000 }).catch(() => false);
+    if (saveBtnVisible) {
+      await saveBtn.click({ force: true });
+      await wait(3000);
+      const snack = await page2.locator('.v-snackbar, [role="status"], [role="alert"]').first().innerText().catch(() => '');
+      console.log(`  Save result: "${snack}"`);
+    } else {
+      console.log('  Save button not found');
+    }
+
+    // Close the settings tab before next scenario iteration
+    await page2.close();
+
+    // STEP 12: Switch back to property tab, reload, scroll down
+    console.log('\n=== TC-007: Switching to property tab, reloading ===');
+    await page1.bringToFront();
+    await page1.reload({ waitUntil: 'networkidle', timeout: 60000 });
+    await wait(3000);
+    try {
+      await page1.locator('.v-progress-circular, .mdi-loading, [class*="loading"]').first()
+        .waitFor({ state: 'hidden', timeout: 30000 });
+    } catch { /* no spinner */ }
+    await wait(3000);
+
+    // Scroll incrementally so all 8 factor fields become visible before reading
+    console.log('\n=== TC-007: Scrolling property page to reveal all 8 factor fields ===');
+    await page1.evaluate(() => window.scrollTo(0, 0));
+    await wait(500);
+    // Scroll in steps to trigger lazy-render and make all fields visible
+    for (const offset of [300, 600, 900, 1200]) {
+      await page1.evaluate((y) => window.scrollBy(0, y), offset);
+      await wait(600);
+    }
+    await page1.screenshot({ path: 'screenshots/tc007-property-scrolled-fields.png' });
+
+    // Log the current value of each field as visible on screen
+    console.log('\n  Field values visible after scroll:');
+    for (const name of factorNames) {
+      const input = page1.locator(`input[placeholder*="${name}" i]`).first();
+      await input.scrollIntoViewIfNeeded().catch(() => {});
+      await wait(200);
+      const val = await input.inputValue().catch(() => 'NOT FOUND');
+      console.log(`    ${name.padEnd(12)}: ${val}`);
+    }
+    await page1.screenshot({ path: 'screenshots/tc007-property-after-reload.png' });
+
+    // STEP 13: Read updated Original Opinion Total, Opinion Total, and factor inputs
+    console.log('\n=== TC-007: Reading updated values after formula edit ===');
+    const newOriginalOpinionTotal = await findValueNearLabel(page1, /^original\s+opinion\s+total$/i);
+    const newOriginalYTotal       = await findValueNearLabel(page1, /^original\s+y\s+total$/i);
+    const newOpinionTotal         = await findValueNearLabel(page1, /^opinion\s+total$/i);
+
+    const updatedFactors = {};
+    for (const name of factorNames) {
+      const input = page1.locator(`input[placeholder*="${name}" i]`).first();
+      const val = await input.inputValue().catch(() => null);
+      updatedFactors[name] = val !== null ? (parseFloat(val) || null) : null;
+    }
+
+    // STEP 14: Compute expected sum of 8 fields and expected per-factor values
+    const sumOf8Fields = Object.values(updatedFactors).reduce((s, v) => s + (v || 0), 0);
+    console.log(`\n  Sum of 8 factor fields on page : ${sumOf8Fields}`);
+    console.log(`  Opinion Total shown on page    : ${newOpinionTotal}`);
+
+    // ── ASSERTION: AFTER update — originalOpinionTotal = soldPrice - originalYTotal
+    // Reuse soldPrice captured earlier from panel text (property hasn't changed)
+    console.log('\n─────────────────────────────────────────────────────────────────');
+    console.log('  TC-007: AFTER UPDATE — Original Opinion Total assertion');
+    console.log(`  Sold Price           : ${soldPrice}`);
+    console.log(`  New Original Y Total : ${newOriginalYTotal}`);
+    if (soldPrice !== null && newOriginalYTotal !== null) {
+      const expectedOOT_after = parseFloat((soldPrice - newOriginalYTotal).toFixed(4));
+      const diffAfter = Math.abs(newOriginalOpinionTotal - expectedOOT_after);
+      const matchAfter = diffAfter < 0.01;
+      console.log(`  Formula            : ${soldPrice} - ${newOriginalYTotal} = ${expectedOOT_after}`);
+      console.log(`  Actual on page     : ${newOriginalOpinionTotal}`);
+      if (matchAfter) {
+        console.log(`  ✓  AFTER UPDATE: Original Opinion Total matches formula (${newOriginalOpinionTotal})`);
+      } else {
+        console.log(`  ❌ AFTER UPDATE: Mismatch — expected ${expectedOOT_after}, got ${newOriginalOpinionTotal}, diff ${diffAfter.toFixed(6)}`);
+      }
+      if (!matchAfter) {
+        scenarioAssertionErrors.push(
+          `AFTER UPDATE: Original Opinion Total mismatch — expected ${soldPrice} - ${newOriginalYTotal} = ${expectedOOT_after}, got ${newOriginalOpinionTotal} (diff ${diffAfter.toFixed(6)})`
+        );
+      }
+    } else {
+      console.log(`  ⚠  AFTER UPDATE: Could not read Sold Price — skipping assertion`);
+    }
+    console.log('─────────────────────────────────────────────────────────────────\n');
+
+    // STEP 15: Verify — expected factor value = savedRatio × newOriginalOpinionTotal
+    //          Also verify Opinion Total == sum of 8 fields
+    console.log('\n─────────────────────────────────────────────────────────────────');
+    console.log('  TC-007: VERIFICATION — Opinion values after Y-Formula edit');
+    console.log(`  New Original Opinion Total : ${newOriginalOpinionTotal}`);
+    console.log(`  New Original Y Total       : ${newOriginalYTotal}`);
+    console.log(`  Opinion Total on page      : ${newOpinionTotal}`);
+    console.log(`  Sum of 8 factor fields     : ${sumOf8Fields}`);
+    console.log('─────────────────────────────────────────────────────────────────');
+    console.log('  Factor          | Saved Ratio | Expected (ratio×newOrigOp)   | Actual   | Result');
+    console.log('  ────────────────|─────────────|──────────────────────────────|──────────|───────');
+
+    const assertionErrors = scenarioAssertionErrors; // reuse same array so all errors accumulate
+    for (const name of factorNames) {
+      const ratio    = savedRatios[name];
+      const expected = newOriginalOpinionTotal !== null && newOriginalOpinionTotal !== 0
+        ? parseFloat((ratio * newOriginalOpinionTotal).toFixed(4))
+        : null;
+      const actual   = updatedFactors[name];
+      const match    = actual !== null && expected !== null
+        ? Math.abs(actual - expected) < 0.01
+        : false;
+
+      const namePad = name.padEnd(16);
+      const rPad    = String(ratio).padEnd(12);
+      const ePad    = String(expected).padEnd(29);
+      const aPad    = String(actual).padEnd(9);
+      console.log(`  ${namePad}| ${rPad}| ${ePad}| ${aPad}| ${match ? '✓ MATCH' : '✗ MISMATCH'}`);
+
+      if (!match) {
+        console.log(`    ❌ [${name}]`);
+        console.log(`         Saved Ratio          : ${ratio}`);
+        console.log(`         New Orig Opinion Tot : ${newOriginalOpinionTotal}`);
+        console.log(`         Expected             : ${ratio} × ${newOriginalOpinionTotal} = ${expected}`);
+        console.log(`         Actual on page       : ${actual}`);
+        console.log(`         Old Opinion Total    : ${originalOpinionTotal} (before formula edit)`);
+        console.log(`         Difference           : ${actual !== null && expected !== null ? Math.abs(actual - expected).toFixed(6) : 'N/A'}`);
+        assertionErrors.push(`${name}: expected ${expected} (${ratio} × ${newOriginalOpinionTotal}) but got ${actual}`);
+      } else {
+        console.log(`    ✓  [${name}] Matches: ${actual}`);
+      }
+    }
+
+    // STEP 16: Assert Opinion Total on page == sum of 8 fields
+    console.log('\n─────────────────────────────────────────────────────────────────');
+    const opinionTotalMatch = newOpinionTotal !== null
+      ? Math.abs(newOpinionTotal - sumOf8Fields) < 0.01
+      : false;
+    console.log(`  Opinion Total check: page shows ${newOpinionTotal}, sum of 8 fields = ${sumOf8Fields}`);
+    if (!opinionTotalMatch) {
+      console.log(`  ❌ MISMATCH — Opinion Total (${newOpinionTotal}) ≠ Sum of 8 fields (${sumOf8Fields})`);
+      assertionErrors.push(`Opinion Total mismatch: page shows ${newOpinionTotal} but sum of 8 fields = ${sumOf8Fields}`);
+    } else {
+      console.log(`  ✓  Opinion Total matches sum of 8 fields: ${newOpinionTotal}`);
+    }
+    console.log('─────────────────────────────────────────────────────────────────\n');
+
+    // STEP 17: Navigate back to Properties chart, hover same dot, check panel Opinion Total
+    console.log('\n=== TC-007: Navigating back to Properties chart to check panel opinion ===');
+    await getNavLocator(page1, 'propertiesNav').first().click({ force: true });
+    await page1.waitForURL('**/properties**', { timeout: 20000 });
+    await wait(3000);
+    try {
+      await page1.locator('.v-progress-circular, [class*="loading"]').first()
+        .waitFor({ state: 'hidden', timeout: 20000 });
+    } catch { /* loaded */ }
+    await wait(4000);
+
+    // Hover on same dot
+    const chartRect2 = await page1.evaluate(() => {
+      const el = document.querySelector('.chart-card') || document.querySelector('[class*="chart-card"]');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+
+    let panelOpinionValue = null;
+    if (chartRect2) {
+      const hx = Math.round(chartRect2.x + chartRect2.width  * 0.35);
+      const hy = Math.round(chartRect2.y + chartRect2.height * 0.70);
+      await page1.mouse.move(hx, hy);
+      await wait(1500);
+      await page1.mouse.click(hx, hy);
+      await wait(2000);
+      await page1.screenshot({ path: 'screenshots/tc007-panel-after-hover.png' });
+
+      // Read the panel text — look for OPINION value
+      const panelText = await page1.locator('.card-panel, [class*="card-panel"]').first()
+        .innerText().catch(() => '');
+      console.log(`  Panel text: "${panelText.replace(/\n/g, ' | ')}"`);
+
+      // Extract the displayed opinion value from panel (e.g. "$40" next to "OPINION")
+      const opinionMatch = panelText.match(/OPINION\s*\n?\s*\$?([\d,.-]+)/i);
+      if (opinionMatch) {
+        panelOpinionValue = parseFloat(opinionMatch[1].replace(/,/g, ''));
+        console.log(`  Panel Opinion value extracted: ${panelOpinionValue}`);
+      } else {
+        console.log('  Panel Opinion value not found in text');
+      }
+    }
+
+    // STEP 18: Assert panel Opinion Total matches sum of 8 fields
+    console.log('\n─────────────────────────────────────────────────────────────────');
+    console.log('  TC-007: PANEL OPINION TOTAL ASSERTION');
+    console.log(`  Expected (sum of 8 fields) : ${sumOf8Fields}`);
+    console.log(`  Panel shows                : ${panelOpinionValue}`);
+
+    if (panelOpinionValue === null) {
+      console.log('  ⚠  Panel Opinion value could not be read — skipping panel assertion');
+    } else if (Math.abs(panelOpinionValue - sumOf8Fields) < 0.01) {
+      console.log(`  ✓  Panel Opinion Total matches: ${panelOpinionValue}`);
+    } else {
+      console.log(`  ❌ Panel Opinion Total MISMATCH`);
+      console.log(`     Panel shows  : ${panelOpinionValue} (OLD value if formula not applied)`);
+      console.log(`     Expected     : ${sumOf8Fields} (new sum of 8 fields)`);
+      assertionErrors.push(`Panel Opinion Total mismatch: panel shows ${panelOpinionValue} but expected ${sumOf8Fields} (sum of 8 fields)`);
+    }
+    console.log('─────────────────────────────────────────────────────────────────\n');
+
+    await page1.screenshot({ path: 'screenshots/tc007-final-state.png' });
+
+    // Save per-scenario verification output
+    const { writeFileSync, mkdirSync } = await import('fs');
+    mkdirSync('output', { recursive: true });
+    const scenarioSlug = (scenario.scenario || `scenario-${bvtScenarios.indexOf(scenario) + 1}`)
+      .replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40);
+    writeFileSync(`output/tc007-${scenarioSlug}.json`, JSON.stringify({
+      capturedAt: new Date().toISOString(),
+      scenario: scenario.scenario,
+      excelFile: 'test-data/filter-input-template.xlsx (BVT Scenarios sheet)',
+      excelInputs: { baseValue: newBaseValue, yFactors: bvtYFactors },
+      expectedResult: scenario.expected,
+      savedRatios,
+      before: { originalOpinionTotal, originalYTotal, opinionTotal },
+      after: {
+        newOriginalOpinionTotal,
+        newOriginalYTotal,
+        newOpinionTotal,
+        sumOf8Fields,
+        panelOpinionValue,
+        updatedFactors,
+      },
+      formula: 'expected_factor = savedRatio × newOriginalOpinionTotal',
+      opinionTotalFormula: 'opinionTotal = sum of all 8 factor fields',
+      passed: assertionErrors.length === 0,
+      failures: assertionErrors,
+    }, null, 2));
+    console.log(`Verification saved to output/tc007-${scenarioSlug}.json`);
+
+    // Track scenario outcome
+    allScenarioResults.push({
+      scenario: scenario.scenario,
+      expected: scenario.expected,
+      passed: assertionErrors.length === 0,
+      failures: assertionErrors,
+    });
+
+    // Log outcome but do NOT throw — let all scenarios run first
+    if (assertionErrors.length > 0) {
+      console.log(`\n❌ [${scenario.scenario}] ${assertionErrors.length} check(s) FAILED (browser will close, next scenario starts):`);
+      assertionErrors.forEach((e, i) => console.log(`   ${i + 1}. ${e}`));
+    } else {
+      console.log(`✓ [${scenario.scenario}] All checks passed.`);
+    }
+
+      } finally {
+        // Always close the browser context — even if a step threw an unhandled error
+        await context.close();
+        console.log(`  Browser closed for scenario: ${scenario.scenario}`);
+      }
+  } // ──── end for (const scenario of bvtScenarios)
+
+  // Summary across all BVT scenarios
+  console.log(`\n${'═'.repeat(70)}`);
+  console.log('=== TC-007 BVT SUMMARY ===');
+  for (const r of allScenarioResults) {
+    const status = r.passed ? '✓ PASS' : '✗ FAIL';
+    console.log(`  ${status}  [${r.scenario}]  (expected=${r.expected})`);
+    if (!r.passed) r.failures.forEach(f => console.log(`         ↳ ${f}`));
+  }
+  const totalPass = allScenarioResults.filter(r => r.passed).length;
+  console.log(`\n  ${totalPass} / ${allScenarioResults.length} scenarios passed.`);
+  console.log(`${'═'.repeat(70)}`);
+  console.log('=== TC-007 COMPLETE ===');
+
+  // Now throw once if any scenario failed — all scenarios have already run
+  const failedScenarios = allScenarioResults.filter(r => !r.passed);
+  if (failedScenarios.length > 0) {
+    const summary = failedScenarios.map(r =>
+      `[${r.scenario}]:\n` + r.failures.map((f, i) => `  ${i + 1}. ${f}`).join('\n')
+    ).join('\n\n');
+    expect(failedScenarios, `${failedScenarios.length} / ${allScenarioResults.length} scenario(s) FAILED:\n\n${summary}`).toHaveLength(0);
+  }
+});
 
 });
