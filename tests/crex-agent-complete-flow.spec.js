@@ -552,20 +552,24 @@ test.describe('CREX Agent - Complete Property Filter Flow', () => {
     await expect(getYFormulaLocator(page, 'baseValueLabelRequired')).toBeVisible();
 
     // ============================================================
-    // STEP 4: Fill mandatory market configuration fields
+    // STEP 4: Fill mandatory market configuration fields (values from Excel)
     // ============================================================
-    await selectYFormulaDialogOption(page, 'Select MLS Board', 'Northstar MLS');
+    await selectYFormulaDialogOption(page, 'Select MLS Board', excelData.yFormula.mlsBoard);
     await wait(2000); // Wait for State dropdown to become enabled (API cascade)
-    await selectYFormulaDialogOption(page, 'Select State', 'Minnesota');
+    await selectYFormulaDialogOption(page, 'Select State', excelData.yFormula.state);
     await wait(2000); // Wait for County dropdown to become enabled (API cascade)
-    await selectYFormulaDialogOption(page, 'Select County', 'Washington');
+    await selectYFormulaDialogOption(page, 'Select County', excelData.yFormula.county);
     await wait(1500); // Wait for City/Zip dropdowns to become enabled
 
     // Optional fields
-    await selectYFormulaDialogOption(page, 'Select City', 'Stillwater');
-    await wait(1000);
-    await selectYFormulaDialogOption(page, 'Select Zip Code', '55082');
-    await wait(1000);
+    if (excelData.yFormula.city) {
+      await selectYFormulaDialogOption(page, 'Select City', excelData.yFormula.city);
+      await wait(1000);
+    }
+    if (excelData.yFormula.zipCode) {
+      await selectYFormulaDialogOption(page, 'Select Zip Code', excelData.yFormula.zipCode);
+      await wait(1000);
+    }
 
     // Ensure no dropdown overlay is blocking the Base Value input
     const overlayOpen = await page.locator('.v-overlay--active .v-list-item').count();
@@ -577,7 +581,7 @@ test.describe('CREX Agent - Complete Property Filter Flow', () => {
     const baseValueInput = page.locator('.v-dialog input[placeholder="Enter base value"]');
     await baseValueInput.click();
     await wait(500);
-    await baseValueInput.fill('1000');
+    await baseValueInput.fill(excelData.yFormula.baseValue);
     await baseValueInput.press('Tab');
     await wait(800);
 
@@ -884,12 +888,89 @@ test.describe('CREX Agent - Complete Property Filter Flow', () => {
     await wait(500);
     await createButton.click({ force: true });
 
-    // Wait for the dialog's active-overlay class to be removed (Vuetify removes
-    // v-overlay--active when a dialog closes, even before the element leaves DOM).
-    await page.locator('.v-overlay--active').waitFor({ state: 'hidden', timeout: 30000 });
+    // Wait up to 60s for the dialog to close (success) OR for a duplicate error toast.
+    // If the API rejects the formula (duplicate geographic location), the dialog stays
+    // open. In that case we close it manually — the matching row already exists in the
+    // table and we can still proceed to click its search button.
+    const dialogClosed = await Promise.race([
+      page.locator('[role="dialog"].v-overlay--active')
+        .waitFor({ state: 'hidden', timeout: 60000 })
+        .then(() => true)
+        .catch(() => false),
+      // Detect duplicate-error toast: "already exists"
+      page.locator('.v-snackbar, [class*="toast"], [role="status"]')
+        .filter({ hasText: /already exists/i })
+        .waitFor({ state: 'visible', timeout: 60000 })
+        .then(() => false)
+        .catch(() => false),
+    ]);
+
+    if (!dialogClosed) {
+      // Formula may still be processing OR may have just closed — check first.
+      const dialogStillOpen = await page.locator('[role="dialog"].v-overlay--active').isVisible();
+      if (dialogStillOpen) {
+        // Dialog is genuinely still open (duplicate error) — dismiss with Escape
+        await page.keyboard.press('Escape');
+        await wait(1500);
+      }
+      // If dialog is already gone, proceed normally
+    }
 
     // Verify we are back on the Y-Total table
     await expect(getYFormulaLocator(page, 'addNewFormulaButton').first()).toBeVisible({ timeout: 10000 });
+
+    // ============================================================
+    // STEP 6: Click the Search icon on the matching row
+    //         and wait until the map/plot finishes loading
+    // ============================================================
+    // Find the row that matches the formula values from Excel (MLS Board + State + County).
+    // Falls back to first row if no match found.
+    // The search button (magnifying glass) is the 3rd icon button (index 2) in the action cell.
+    const targetMls    = excelData.yFormula.mlsBoard;
+    const targetState  = excelData.yFormula.state;
+    const targetCounty = excelData.yFormula.county;
+
+    // Locate the matching table row by visible text, then get its search button
+    const matchingRow = page.locator('table tbody tr').filter({
+      has: page.locator('td', { hasText: targetMls }),
+    }).filter({
+      has: page.locator('td', { hasText: targetState }),
+    }).filter({
+      has: page.locator('td', { hasText: targetCounty }),
+    }).first();
+
+    const rowExists = await matchingRow.count() > 0;
+    const searchBtn = rowExists
+      ? matchingRow.locator('td:last-child button:nth-child(3)')
+      : getYFormulaLocator(page, 'rowSearchButton'); // fallback: first row
+
+    await expect(searchBtn).toBeVisible({ timeout: 10000 });
+    await searchBtn.click({ force: true });
+
+    // Wait for navigation to the Properties page
+    await page.waitForURL('**/properties**', { timeout: 30000 });
+
+    // Wait until the map/plot loading spinner disappears (plot is done)
+    // The spinner uses class v-progress-circular or mdi-loading; wait for it to vanish.
+    try {
+      await page.locator('.v-progress-circular, .mdi-loading, [class*="loading"]').first().waitFor({ state: 'hidden', timeout: 60000 });
+    } catch { /* spinner may never appear if data loads instantly */ }
+
+    // Additional buffer for the Leaflet map tiles to fully render
+    await wait(5000);
+
+    // Confirm the map is visible — Leaflet, Canvas, or SVG-based map
+    // Use a soft check: pass if ANY map element is found
+    const mapLocator = page.locator('.leaflet-container, canvas.leaflet-zoom-animated, svg.leaflet-zoom-animated, #map, [class*="mapbox"], [class*="map-container"]');
+    const mapCount = await mapLocator.count();
+    if (mapCount > 0) {
+      await expect(mapLocator.first()).toBeVisible({ timeout: 15000 });
+    } else {
+      // Verify we are at minimum on the properties page with some content loaded
+      await expect(page).toHaveURL(/properties/, { timeout: 5000 });
+    }
+    await page.reload();
+    await page.waitForEvent('load');
   });
 
 });

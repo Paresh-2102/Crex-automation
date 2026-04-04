@@ -174,6 +174,14 @@ export const locators = {
     method: 'locator',
     fallback: 'button.bg-primary:has-text("Add"), button:has-text("Add")',
   },
+
+  // 3rd icon button in each table row's action cell (0-indexed = 2).
+  // Icon order per row: [0] edit/pencil · [1] eye/view · [2] search/magnifying-glass · [3] delete/trash(btn-error)
+  // The search button navigates to the Properties page with the formula applied.
+  rowSearchButton: {
+    selector: 'table tbody tr:first-child td:last-child button:nth-child(3)',
+    method: 'locator',
+  },
 };
 
 export function getLocator(page, name) {

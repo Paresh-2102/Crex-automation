@@ -31,6 +31,7 @@ export async function readExcelData(filePath = EXCEL_PATH) {
     marketFilters: readMarketFilters(workbook),
     marketFeatures: readMarketFeatures(workbook),
     yFactors: readYFactors(workbook),
+    yFormula: readYFormula(workbook),
   };
 }
 
@@ -155,6 +156,37 @@ function readYFactors(workbook) {
 }
 
 // =====================================================
+// Sheet 4: Y-Formula
+// =====================================================
+function readYFormula(workbook) {
+  const sheet = workbook.getWorksheet('Y-Formula');
+  if (!sheet) throw new Error('Sheet "Y-Formula" not found in Excel file');
+
+  const fieldMap = {
+    'MLS Board':  'mlsBoard',
+    'State':      'state',
+    'County':     'county',
+    'City':       'city',
+    'Zip Code':   'zipCode',
+    'Base Value': 'baseValue',
+  };
+
+  const result = {};
+
+  sheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return; // skip header
+    const fieldName = String(row.getCell(1).value || '').trim();
+    const value = String(row.getCell(2).value ?? '').trim();
+    const jsKey = fieldMap[fieldName];
+    if (jsKey) {
+      result[jsKey] = value;
+    }
+  });
+
+  return result;
+}
+
+// =====================================================
 // CLI: Run directly to preview data
 // =====================================================
 if (process.argv[1] && process.argv[1].includes('read-excel-data')) {
@@ -166,6 +198,8 @@ if (process.argv[1] && process.argv[1].includes('read-excel-data')) {
     console.log(JSON.stringify(data.marketFeatures, null, 2));
     console.log('\nY-Factors:');
     console.log(JSON.stringify(data.yFactors, null, 2));
+    console.log('\nY-Formula:');
+    console.log(JSON.stringify(data.yFormula, null, 2));
   }).catch(err => {
     console.error('Error reading Excel:', err.message);
     process.exit(1);
