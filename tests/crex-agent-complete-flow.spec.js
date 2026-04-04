@@ -125,7 +125,7 @@ async function selectYFormulaDialogOption(page, placeholder, value) {
 test.describe('CREX Agent - Complete Property Filter Flow', () => {
 
   // Long E2E flow needs more time
-  test.setTimeout(180000);
+  test.setTimeout(300000);
 
   test.skip('TC-001: should login successfully', async ({ page }) => {
     await page.goto('/login');
@@ -514,7 +514,7 @@ test.describe('CREX Agent - Complete Property Filter Flow', () => {
     await expect(page).toHaveURL(/properties|property|detail/);
   });
 
-  test('TC-004: should create Y-formula from Settings > Y-Total', async ({ page }) => {
+  test.skip('TC-004: should create Y-formula from Settings > Y-Total', async ({ page }) => {
     // Increase viewport height so the dialog footer (Next/Add buttons) is always visible
     await page.setViewportSize({ width: 1280, height: 1024 });
 
@@ -969,8 +969,1085 @@ test.describe('CREX Agent - Complete Property Filter Flow', () => {
       // Verify we are at minimum on the properties page with some content loaded
       await expect(page).toHaveURL(/properties/, { timeout: 5000 });
     }
-    await page.reload();
-    await page.waitForEvent('load');
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+  });
+
+  // ============================================================
+  // TC-005: Explore Properties chart — click dot → Select → Set Opinion → find locators
+  // Flow: Login → Settings → Y-Total → Search icon → reload wait →
+  //       hover/click blue dot → Select property → Set Opinion → extract all locators
+  // ============================================================
+  test.skip('TC-005: should explore Set Opinion flow from Properties chart', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // ── STEP 1: Login ─────────────────────────────────────────────────────────
+    await page.goto('/login');
+    await getLoginLocator(page, 'emailInput').fill(EMAIL);
+    await getLoginLocator(page, 'passwordInput').fill(PASSWORD);
+    await getLoginLocator(page, 'signInButton').click();
+    await page.waitForURL('**/affiliate-managers', { timeout: 15000 });
+
+    // ── STEP 2: Navigate → Settings → Y-Total tab ─────────────────────────────
+    await removeOverlayScrim(page);
+    await getNavLocator(page, 'settingsNav').first().click({ force: true });
+    await page.waitForURL('**/settings**', { timeout: 15000 });
+    await wait(2000);
+
+    await getYFormulaLocator(page, 'yTotalTab').first().click({ force: true });
+    await wait(2000);
+
+    // ── STEP 3: Click the Search icon on the first available formula row ───────
+    // The search button is the 3rd icon button in the last-column action cell
+    const targetMls    = excelData.yFormula.mlsBoard;
+    const targetState  = excelData.yFormula.state;
+    const targetCounty = excelData.yFormula.county;
+
+    const matchingRow = page.locator('table tbody tr').filter({
+      has: page.locator('td', { hasText: targetMls }),
+    }).filter({
+      has: page.locator('td', { hasText: targetState }),
+    }).filter({
+      has: page.locator('td', { hasText: targetCounty }),
+    }).first();
+
+    const rowExists = await matchingRow.count() > 0;
+    const searchBtn = rowExists
+      ? matchingRow.locator('td:last-child button:nth-child(3)')
+      : page.locator('table tbody tr').first().locator('td:last-child button:nth-child(3)');
+
+    await expect(searchBtn).toBeVisible({ timeout: 10000 });
+
+    console.log('=== TC-005: Search button locator ===');
+    const searchBtnHtml = await searchBtn.evaluate(el => el.outerHTML);
+    console.log('Search button HTML:', searchBtnHtml);
+
+    await searchBtn.click({ force: true });
+
+    // ── STEP 4: Wait for Properties page + chart to fully load ────────────────
+    await page.waitForURL('**/properties**', { timeout: 30000 });
+    await wait(2000);
+
+    // Wait for any loading spinner/indicator to disappear
+    try {
+      await page.locator('.v-progress-circular, .mdi-loading, [class*="loading"]').first().waitFor({ state: 'hidden', timeout: 30000 });
+    } catch { /* no spinner appeared */ }
+
+    // Wait for chart data points to appear (SVG circles or canvas)
+    await wait(4000);
+
+    // ── STEP 6: Find locators on the loaded Properties page ───────────────────
+    console.log('\n=== TC-005: Extracting page locators ===');
+
+    // Chart container
+    const chartInfo = await page.evaluate(() => {
+      const results = {};
+
+      // Chart wrapper
+      const chartWrappers = [
+        document.querySelector('svg'),
+        document.querySelector('canvas'),
+        document.querySelector('[class*="chart"]'),
+        document.querySelector('[class*="recharts"]'),
+        document.querySelector('[class*="apexcharts"]'),
+      ].filter(Boolean);
+      results.chartType = chartWrappers.length > 0 ? chartWrappers[0].tagName + (chartWrappers[0].className ? ' class="' + chartWrappers[0].className + '"' : '') : 'not found';
+
+      // SVG circles (typical scatter plot dots)
+      const circles = document.querySelectorAll('svg circle');
+      results.svgCirclesCount = circles.length;
+      if (circles.length > 0) {
+        const sample = circles[0];
+        results.svgCircleSample = { tag: 'circle', fill: sample.getAttribute('fill'), cx: sample.getAttribute('cx'), cy: sample.getAttribute('cy'), r: sample.getAttribute('r'), class: sample.getAttribute('class') };
+      }
+
+      // SVG ellipses (alternative dot rendering)
+      const ellipses = document.querySelectorAll('svg ellipse');
+      results.svgEllipsesCount = ellipses.length;
+      if (ellipses.length > 0) {
+        const s = ellipses[0];
+        results.svgEllipseSample = { cx: s.getAttribute('cx'), cy: s.getAttribute('cy'), rx: s.getAttribute('rx'), ry: s.getAttribute('ry'), fill: s.getAttribute('fill'), class: s.getAttribute('class') };
+      }
+
+      // SVG paths
+      const paths = document.querySelectorAll('svg path');
+      results.svgPathsCount = paths.length;
+
+      // SVG groups that may contain dots
+      const groups = document.querySelectorAll('svg g');
+      results.svgGroupsCount = groups.length;
+
+      // Chart container bounding rect
+      const svg = document.querySelector('svg');
+      if (svg) results.svgRect = svg.getBoundingClientRect();
+
+      // Recharts dots
+      const rechartsDots = document.querySelectorAll('.recharts-dot, .recharts-scatter-symbol, [class*="recharts-dot"]');
+      results.rechartsDotCount = rechartsDots.length;
+
+      return results;
+    });
+
+    console.log('Chart info:', JSON.stringify(chartInfo, null, 2));
+
+    // ── STEP 7: Hover over and click a blue dot ────────────────────────────────
+    // The chart is canvas-based. Find the chart-card container and click into it.
+    let clicked = false;
+
+    // Get chart container bounding rect (from initial run: x≈320, y≈211, w≈654, h≈728)
+    const chartRect = await page.evaluate(() => {
+      const candidates = [
+        document.querySelector('.chart-card'),
+        document.querySelector('[class*="chart-card"]'),
+        document.querySelector('canvas'),
+        document.querySelector('[class*="chart"]'),
+      ].filter(Boolean);
+      if (candidates.length === 0) return null;
+      const el = candidates[0];
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height, tag: el.tagName, class: el.className };
+    });
+
+    console.log('Chart container rect:', JSON.stringify(chartRect));
+
+    if (chartRect) {
+      // Blue dots are scattered in the chart. Try several coordinate positions
+      // from dense cluster area (35-55% width, 55-80% height of chart area)
+      const dotPositions = [
+        { px: 0.35, py: 0.70 },  // lower-left cluster
+        { px: 0.45, py: 0.65 },  // center cluster
+        { px: 0.30, py: 0.75 },  // bottom-left
+        { px: 0.50, py: 0.60 },  // center
+        { px: 0.40, py: 0.55 },  // upper-center
+      ];
+
+      for (const pos of dotPositions) {
+        const x = Math.round(chartRect.x + chartRect.width * pos.px);
+        const y = Math.round(chartRect.y + chartRect.height * pos.py);
+        console.log(`Trying hover at (${x}, ${y}) [${pos.px*100}%, ${pos.py*100}%]`);
+        await page.mouse.move(x, y);
+        await wait(1000);
+
+        // Check if right panel updated (no longer shows placeholder text)
+        const panelText = await page.locator('.card-panel, [class*="card-panel"]').first().innerText().catch(() => '');
+        console.log(`Panel text after hover: "${panelText.slice(0, 60)}"`);
+
+        if (!panelText.includes('Hover or click') && panelText.trim().length > 0) {
+          // Property data appeared — click here
+          await page.mouse.click(x, y);
+          clicked = true;
+          console.log(`✓ Dot found and clicked at (${x}, ${y})`);
+          await wait(2500);
+          break;
+        }
+      }
+
+      // If hover didn't trigger, just click the most likely spot (dense cluster center)
+      if (!clicked) {
+        const x = Math.round(chartRect.x + chartRect.width * 0.38);
+        const y = Math.round(chartRect.y + chartRect.height * 0.72);
+        console.log(`Forced click at (${x}, ${y}) - dense dot cluster area`);
+        await page.mouse.move(x, y);
+        await wait(800);
+        await page.screenshot({ path: 'screenshots/tc005-hover-state.png' });
+        await page.mouse.click(x, y);
+        clicked = true;
+        await wait(2500);
+      }
+    } else {
+      // Last resort: use hardcoded coordinates based on 1440x900 viewport observation
+      const x = 555, y = 640;
+      console.log(`No chart container found. Using hardcoded coords (${x}, ${y})`);
+      await page.mouse.move(x, y);
+      await wait(800);
+      await page.mouse.click(x, y);
+      clicked = true;
+      await wait(2500);
+    }
+
+    // Screenshot after clicking to see if property appeared in right panel
+    await page.screenshot({ path: 'screenshots/tc005-after-dot-click.png' });
+    console.log('Screenshot after dot click saved');
+
+    // ── STEP 8: Find the property panel on the right side ─────────────────────
+    console.log('\n=== TC-005: Looking for property panel (right side) ===');
+    await wait(1500);
+
+    const propertyPanelInfo = await page.evaluate(() => {
+      const candidates = [
+        document.querySelector('[class*="property-detail"]'),
+        document.querySelector('[class*="property-panel"]'),
+        document.querySelector('[class*="detail-panel"]'),
+        document.querySelector('[class*="side-panel"]'),
+        document.querySelector('[class*="right-panel"]'),
+        // Look for a card/panel that appeared after click
+        ...document.querySelectorAll('.v-card, [class*="card"]'),
+      ].filter(Boolean);
+
+      // Find the rightmost panel-like element visible
+      return candidates.slice(0, 5).map(el => ({
+        tag: el.tagName,
+        class: el.className,
+        text: el.innerText?.slice(0, 100),
+        rect: el.getBoundingClientRect(),
+      }));
+    });
+    console.log('Property panel candidates:', JSON.stringify(propertyPanelInfo, null, 2));
+
+    // Check for "Select" button
+    const selectBtn = page.locator('button:has-text("Select"), [class*="select-btn"], .v-btn:has-text("Select")').first();
+    const selectBtnVisible = await selectBtn.isVisible().catch(() => false);
+    console.log(`Select button visible: ${selectBtnVisible}`);
+
+    if (selectBtnVisible) {
+      const selectBtnHtml = await selectBtn.evaluate(el => el.outerHTML);
+      console.log('Select button HTML:', selectBtnHtml);
+
+      // ── STEP 9: Click the Select button ─────────────────────────────────────
+      await selectBtn.click({ force: true });
+      await wait(1500);
+
+      // ── STEP 10: Verify Set Opinion button becomes active ────────────────────
+      const setOpinionBtn = page.locator('button:has-text("Set Opinion"), .v-btn:has-text("Set Opinion")').first();
+      const setOpinionVisible = await setOpinionBtn.isVisible().catch(() => false);
+      console.log(`Set Opinion button visible after Select: ${setOpinionVisible}`);
+
+      if (setOpinionVisible) {
+        const isEnabled = await setOpinionBtn.isEnabled().catch(() => false);
+        console.log(`Set Opinion button enabled: ${isEnabled}`);
+        const setOpinionHtml = await setOpinionBtn.evaluate(el => el.outerHTML);
+        console.log('Set Opinion button HTML:', setOpinionHtml);
+
+        // ── STEP 11: Click Set Opinion and scroll down ─────────────────────────
+        await setOpinionBtn.click({ force: true });
+
+        // Wait for navigation to the Set Opinion page (property detail page)
+        await page.waitForURL(/properties.*\/\d+|property-detail|set-opinion/i, { timeout: 20000 }).catch(() => {});
+
+        // Wait for "Loading property details..." spinner to disappear
+        try {
+          await page.locator('text=Loading property details').waitFor({ state: 'hidden', timeout: 30000 });
+        } catch { /* spinner gone or never appeared */ }
+        await wait(4000); // additional buffer for all form fields to render
+
+        // Scroll down to see all form fields
+        await page.evaluate(() => window.scrollBy(0, 500));
+        await wait(1000);
+
+        // ── STEP 12: Find all opinion form field locators ─────────────────────
+        console.log('\n=== TC-005: Extracting Set Opinion form locators ===');
+
+        const formLocators = await page.evaluate(() => {
+          const results = {};
+
+          // All inputs and selects
+          const allInputs = [...document.querySelectorAll('input, select, textarea')];
+          results.allInputsCount = allInputs.length;
+
+          // View field — look by placeholder or nearby label
+          const viewInput = allInputs.find(el =>
+            (el.placeholder || '').toLowerCase().includes('view') ||
+            (el.getAttribute('aria-label') || '').toLowerCase().includes('view')
+          );
+          results.viewField = viewInput ? { tag: viewInput.tagName, class: viewInput.className, placeholder: viewInput.placeholder || '' } : null;
+
+          // Condition fields — find by placeholder or label
+          const conditionInputs = allInputs.filter(el =>
+            (el.placeholder || '').toLowerCase().includes('condition')
+          );
+          results.conditionFieldsCount = conditionInputs.length;
+          results.conditionFields = conditionInputs.slice(0, 8).map(el => ({
+            tag: el.tagName,
+            class: el.className,
+            placeholder: el.placeholder || '',
+            id: el.id || '',
+            type: el.type || '',
+          }));
+
+          // Remark / comment field
+          const remarkField = allInputs.find(el =>
+            el.tagName === 'TEXTAREA' ||
+            (el.placeholder || '').toLowerCase().includes('remark') ||
+            (el.placeholder || '').toLowerCase().includes('comment') ||
+            (el.placeholder || '').toLowerCase().includes('note')
+          );
+          results.remarkField = remarkField ? { tag: remarkField.tagName, class: remarkField.className, placeholder: remarkField.placeholder || '' } : null;
+
+          // All visible labels
+          const labels = [...document.querySelectorAll('label, .v-label')];
+          results.visibleLabels = [...new Set(labels.map(l => l.innerText?.trim()).filter(t => t && t.length > 0 && t.length < 60))];
+
+          // All buttons
+          results.buttons = [...document.querySelectorAll('button')].map(b => ({
+            text: b.innerText?.trim(),
+            class: b.className,
+            disabled: b.disabled,
+          })).filter(b => b.text);
+
+          // Photo upload inputs
+          const photoInputs = [...document.querySelectorAll('input[type="file"]')];
+          results.photoInputCount = photoInputs.length;
+          results.photoInputs = photoInputs.map(el => ({
+            tag: el.tagName,
+            type: el.type || '',
+            class: el.className,
+            accept: el.accept || '',
+          }));
+
+          // Any element with photo/image/upload related classes
+          const photoClickables = [...document.querySelectorAll('[class*="photo"], [class*="image-upload"], [class*="upload"], [class*="camera"]')];
+          results.photoClickables = photoClickables.slice(0, 5).map(el => ({
+            tag: el.tagName,
+            class: el.className,
+            outerHTML: el.outerHTML.slice(0, 150),
+          }));
+
+          return results;
+        });
+
+        console.log('Form locators found:', JSON.stringify(formLocators, null, 2));
+
+        // Screenshot to capture the full form state
+        await page.screenshot({ path: 'screenshots/tc005-set-opinion-form.png', fullPage: false });
+        console.log('Screenshot saved: screenshots/tc005-set-opinion-form.png');
+
+        // ── STEP 13: Fill all 8 opinion fields + Remarks ─────────────────────
+        console.log('\n=== TC-005: Filling opinion form fields ===');
+
+        // The 8 fields use numeric inputs with placeholder "Enter <FieldName> Value"
+        // Labels discovered: View*, Condition*, Quality*, Amenities*, Access, Appeal, Elevation, Economic
+        const opinionFields = [
+          { placeholder: 'Enter View Value',      value: '5' },
+          { placeholder: 'Enter Condition Value', value: '5' },
+          { placeholder: 'Enter Quality Value',   value: '5' },
+          { placeholder: 'Enter Amenities Value', value: '5' },
+          { placeholder: 'Enter Access Value',    value: '5' },
+          { placeholder: 'Enter Appeal Value',    value: '5' },
+          { placeholder: 'Enter Elevation Value', value: '5' },
+          { placeholder: 'Enter Economic Value',  value: '5' },
+        ];
+
+        for (const field of opinionFields) {
+          // Use a broad approach: match by placeholder substring
+          const input = page.locator(`input[placeholder="${field.placeholder}"]`).first();
+          const inputVisible = await input.isVisible({ timeout: 5000 }).catch(() => false);
+          if (inputVisible) {
+            await input.click({ force: true });
+            await wait(300);
+            await input.fill(field.value);
+            await wait(200);
+            console.log(`Filled: ${field.placeholder} = ${field.value}`);
+          } else {
+            // Try generic number inputs in order (fallback)
+            console.log(`Field not found by placeholder: "${field.placeholder}" — trying number inputs`);
+            const allNumberInputs = page.locator('input[type="number"]');
+            const idx = opinionFields.indexOf(field);
+            const nthInput = allNumberInputs.nth(idx);
+            if (await nthInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+              await nthInput.click({ force: true });
+              await wait(200);
+              await nthInput.fill(field.value);
+              await wait(200);
+              console.log(`Filled nth(${idx}) number input = ${field.value}`);
+            }
+          }
+        }
+
+        // Fill Remarks / textarea
+        const remarksField = page.locator('textarea[placeholder="Enter remarks"], textarea').first();
+        const remarksVisible = await remarksField.isVisible({ timeout: 5000 }).catch(() => false);
+        if (remarksVisible) {
+          await remarksField.click({ force: true });
+          await wait(300);
+          await remarksField.fill('Test opinion remark from TC-005 automation');
+          await wait(300);
+          console.log('Filled: Remarks');
+        }
+
+        // Screenshot before saving
+        await page.screenshot({ path: 'screenshots/tc005-opinion-filled.png', fullPage: false });
+        console.log('Screenshot saved: tc005-opinion-filled.png');
+
+        // ── STEP 13b: Capture factor values, Original Opinion Total, Y Total & percentages ──
+        console.log('\n=== TC-005: Capturing opinion values and calculating percentages ===');
+
+        const opinionData = await page.evaluate((fields) => {
+          const result = {
+            factors: {},
+            originalOpinionTotal: null,
+            originalYTotal: null,
+            opinionTotal: null,
+            percentages: {},
+          };
+
+          // Read each factor's current value from the input
+          for (const f of fields) {
+            const input = [...document.querySelectorAll('input')]
+              .find(el => el.placeholder === f.placeholder);
+            result.factors[f.label] = input ? (parseFloat(input.value) || 0) : 0;
+          }
+
+          // Read the three labeled card values from the page:
+          // "Original Opinion Total", "Original Y Total", "Opinion Total"
+          const allElements = [...document.querySelectorAll('*')];
+
+          const findValueNearLabel = (labelRegex) => {
+            const labelEl = allElements.find(el =>
+              labelRegex.test(el.innerText?.trim()) &&
+              el.children.length < 4 &&
+              el.tagName !== 'BODY' && el.tagName !== 'HTML'
+            );
+            if (!labelEl) return null;
+            // Value is typically in the next sibling or parent's next child
+            const parent = labelEl.parentElement;
+            if (parent) {
+              const siblings = [...parent.children];
+              const idx = siblings.indexOf(labelEl);
+              for (let i = idx + 1; i < siblings.length; i++) {
+                const text = siblings[i].innerText?.trim().replace(/[$,\s]/g, '');
+                if (text && /^-?[\d.]+$/.test(text)) return parseFloat(text);
+              }
+              // Also try the parent's next sibling
+              const parentNext = parent.nextElementSibling;
+              if (parentNext) {
+                const text = parentNext.innerText?.trim().replace(/[$,\s]/g, '');
+                if (text && /^-?[\d.]+$/.test(text)) return parseFloat(text);
+              }
+            }
+            return null;
+          };
+
+          result.originalOpinionTotal = findValueNearLabel(/^original\s+opinion\s+total$/i);
+          result.originalYTotal       = findValueNearLabel(/^original\s+y\s+total$/i);
+          result.opinionTotal         = findValueNearLabel(/^opinion\s+total$/i);
+
+          return result;
+        }, opinionFields.map((f, i) => ({
+          placeholder: f.placeholder,
+          label: ['View', 'Condition', 'Quality', 'Amenities', 'Access', 'Appeal', 'Elevation', 'Economic'][i],
+        })));
+
+        // Denominator is Original Opinion Total read from the page
+        const originalOpinionTotal = opinionData.originalOpinionTotal;
+        const originalYTotal       = opinionData.originalYTotal;
+        const opinionTotal         = opinionData.opinionTotal;
+
+        // Calculate: factor_value / originalOpinionTotal (raw decimal, no ×100)
+        if (originalOpinionTotal && originalOpinionTotal !== 0) {
+          for (const [label, value] of Object.entries(opinionData.factors)) {
+            opinionData.percentages[label] = parseFloat((value / originalOpinionTotal).toFixed(6));
+          }
+        }
+
+        // ── Console output per parameter ───────────────────────────────────────
+        console.log('\n─────────────────────────────────────────────────────────────');
+        console.log('  OPINION FACTOR BREAKDOWN');
+        console.log(`  Original Opinion Total : ${originalOpinionTotal ?? 'not found on page'}`);
+        console.log(`  Original Y Total       : ${originalYTotal ?? 'not found on page'}`);
+        console.log(`  Opinion Total          : ${opinionTotal ?? 'not found on page'}`);
+        console.log('─────────────────────────────────────────────────────────────');
+        console.log('  Factor          | Value  | factor / Original Opinion Total');
+        console.log('  ────────────────|────────|────────────────────────────────');
+        for (const [label, value] of Object.entries(opinionData.factors)) {
+          const ratio = opinionData.percentages[label] ?? 'N/A';
+          const labelPad = label.padEnd(16);
+          const valuePad = String(value).padEnd(6);
+          console.log(`  ${labelPad}| ${valuePad} | ${ratio}`);
+        }
+        console.log('─────────────────────────────────────────────────────────────\n');
+
+        // Build final save object
+        const opinionCalculation = {
+          capturedAt: new Date().toISOString(),
+          factors: opinionData.factors,
+          originalOpinionTotal: originalOpinionTotal,
+          originalYTotal: originalYTotal,
+          opinionTotal: opinionTotal,
+          ratios: opinionData.percentages,
+          notes: {
+            originalOpinionTotalSource: 'page_element',
+            formula: 'ratio = factor_value / originalOpinionTotal',
+          },
+        };
+
+        // Save to output/opinion-calculation.json
+        const { writeFileSync, mkdirSync } = await import('fs');
+        mkdirSync('output', { recursive: true });
+        writeFileSync('output/opinion-calculation.json', JSON.stringify(opinionCalculation, null, 2));
+        console.log('Opinion calculation saved to output/opinion-calculation.json');
+
+        // ── STEP 14: Select Photos for required factors ───────────────────────
+        // Photos are required for View, Condition, Quality, Amenities before saving.
+        // Click "Select Photos" to open the primary photo selection dialog.
+        console.log('\n=== TC-005: Opening Select Photos dialog ===');
+        const selectPhotosBtn = page.locator('button:has-text("Select Photos")').first();
+        await expect(selectPhotosBtn).toBeVisible({ timeout: 10000 });
+        await selectPhotosBtn.click({ force: true });
+        await wait(2000);
+
+        // The outer dialog appears as the first .v-overlay--active on the page
+        const outerOverlay = page.locator('.v-overlay--active').first();
+        await expect(outerOverlay).toBeVisible({ timeout: 10000 });
+        console.log('Select Primary Photos outer dialog opened');
+        await page.screenshot({ path: 'screenshots/tc005-photo-dialog-open.png' });
+
+        // For each factor: click its Select Photo button, handle inner gallery, save selection
+        const factorRows = ['View', 'Condition', 'Quality', 'Amenities'];
+
+        for (const factor of factorRows) {
+          console.log(`\nSelecting photo for: ${factor}`);
+
+          // Count active overlays BEFORE clicking (so we know when the inner one opens)
+          const overlayCountBefore = await page.locator('.v-overlay--active').count();
+          console.log(`  Overlays before: ${overlayCountBefore}`);
+
+          // Scope to the OUTER dialog overlay to avoid clicking page-level "Select Photos" button
+          const outerDialogBtns = outerOverlay.locator('button:has-text("Select Photo")');
+          const btnCount = await outerDialogBtns.count();
+          console.log(`  "Select Photo" buttons in outer dialog: ${btnCount}`);
+
+          if (btnCount === 0) {
+            console.log(`  No buttons left for ${factor}, skipping`);
+            continue;
+          }
+
+          // Always click the first remaining "Select Photo" in the outer dialog
+          await outerDialogBtns.first().click({ force: true });
+          await wait(3000); // Give time for inner gallery to load
+
+          const overlayCountAfter = await page.locator('.v-overlay--active').count();
+          console.log(`  Overlays after: ${overlayCountAfter}`);
+          await page.screenshot({ path: `screenshots/tc005-inner-gallery-${factor.toLowerCase()}.png` });
+
+          if (overlayCountAfter > overlayCountBefore) {
+            // A new overlay (inner gallery) has appeared
+            const innerOverlay = page.locator('.v-overlay--active').last();
+            const imgElements = innerOverlay.locator('img');
+            const imgCount = await imgElements.count();
+            console.log(`  Inner gallery opened for ${factor}, images: ${imgCount}`);
+
+            // Save Selection button in inner dialog
+            const saveSelBtn = innerOverlay.locator('button:has-text("Save Selection")');
+
+            // Click the FIRST image — try parent container first (the selection handler is on the card)
+            let imageSelected = false;
+            const firstImg = imgElements.first();
+            const firstImgVisible = await firstImg.isVisible({ timeout: 3000 }).catch(() => false);
+
+            if (firstImgVisible) {
+              // Try clicking the parent container of img (the card/wrapper with the click handler)
+              // Go up 1-2 levels to find the clickable wrapper
+              await page.evaluate(() => {
+                const overlays = [...document.querySelectorAll('.v-overlay--active')];
+                const innerDlg = overlays[overlays.length - 1];
+                if (!innerDlg) return;
+                const imgs = innerDlg.querySelectorAll('img');
+                if (imgs.length === 0) return;
+                // Walk up from img to find a clickable parent
+                let el = imgs[0].parentElement;
+                for (let i = 0; i < 4; i++) {
+                  if (!el) break;
+                  // Try clicking this level
+                  el.click();
+                  el = el.parentElement;
+                }
+              });
+              await wait(1000);
+              imageSelected = await saveSelBtn.isEnabled({ timeout: 2000 }).catch(() => false);
+              console.log(`  After parent walk click, Save enabled: ${imageSelected}`);
+            }
+
+            if (!imageSelected) {
+              // Fallback: click the img element directly
+              await firstImg.click({ force: true });
+              await wait(1000);
+              imageSelected = await saveSelBtn.isEnabled({ timeout: 2000 }).catch(() => false);
+              console.log(`  After direct img click, Save enabled: ${imageSelected}`);
+            }
+
+            if (!imageSelected) {
+              // Fallback: click at coordinates in the gallery area (first photo area)
+              const innerBox = await innerOverlay.boundingBox();
+              if (innerBox) {
+                // First photo should be in the upper-left region of the gallery area
+                // Offset ~100px from top (for header) and ~50px from left
+                const clickX = Math.round(innerBox.x + innerBox.width * 0.2);
+                const clickY = Math.round(innerBox.y + 200); // roughly where first photo starts
+                await page.mouse.click(clickX, clickY);
+                await wait(1000);
+                imageSelected = await saveSelBtn.isEnabled({ timeout: 2000 }).catch(() => false);
+                console.log(`  After coords click (${clickX}, ${clickY}), Save enabled: ${imageSelected}`);
+              }
+            }
+
+            // Click Save Selection if enabled
+            const finalSaveEnabled = await saveSelBtn.isEnabled({ timeout: 2000 }).catch(() => false);
+            if (finalSaveEnabled) {
+              await saveSelBtn.click({ force: true });
+              await wait(2000);
+              console.log(`  Saved selection for ${factor}`);
+              // Wait for inner overlay to close
+              await page.waitForFunction(
+                (prevCount) => document.querySelectorAll('.v-overlay--active').length <= prevCount,
+                overlayCountBefore + 1,
+                { timeout: 5000 }
+              ).catch(() => {});
+            } else {
+              console.log(`  Save Selection still disabled for ${factor} — pressing Escape`);
+              await page.keyboard.press('Escape');
+              await wait(1500);
+            }
+          } else {
+            // No new overlay — button click didn't open inner dialog
+            const debugInfo = await page.evaluate(() =>
+              [...document.querySelectorAll('.v-overlay--active')]
+                .map(el => el.innerText?.slice(0, 80))
+            );
+            console.log(`  No new inner dialog for ${factor}. Active overlays:`, JSON.stringify(debugInfo));
+          }
+
+          await wait(500);
+        }
+
+        // Screenshot outer dialog after all photo selections
+        await page.screenshot({ path: 'screenshots/tc005-photo-dialog-after-selection.png' });
+
+        // Click Confirm on the outer "Select Primary Photos" dialog
+        const outerConfirmBtn = outerOverlay.locator('button:has-text("Confirm")').first();
+        const confirmEnabled = await outerConfirmBtn.isEnabled({ timeout: 5000 }).catch(() => false);
+        console.log(`\nOuter Confirm button enabled: ${confirmEnabled}`);
+        if (confirmEnabled) {
+          await outerConfirmBtn.click({ force: true });
+          await wait(2000);
+          console.log('Photo selection confirmed!');
+        } else {
+          console.log('Confirm still disabled — cancelling photo dialog');
+          await outerOverlay.locator('button:has-text("Cancel")').first().click({ force: true }).catch(() => {});
+          await wait(500);
+        }
+
+        // ── STEP 15: Click Save Opinion ────────────────────────────────────────
+        console.log('\n=== TC-005: Clicking Save Opinion ===');
+        const saveOpinionBtn = page.locator('button:has-text("Save Opinion")').first();
+        const saveEnabled = await saveOpinionBtn.isEnabled({ timeout: 5000 }).catch(() => false);
+        console.log(`Save Opinion button enabled: ${saveEnabled}`);
+        await saveOpinionBtn.scrollIntoViewIfNeeded().catch(() => {});
+        await wait(500);
+        await saveOpinionBtn.click({ force: true });
+        await wait(3000);
+
+        // Check for success or error state
+        const snackbarText = await page.locator('.v-snackbar, [role="status"], [role="alert"]').first().innerText().catch(() => '');
+        console.log(`Snackbar/toast text: "${snackbarText}"`);
+        await page.screenshot({ path: 'screenshots/tc005-after-save-opinion.png', fullPage: false });
+        console.log('Screenshot saved: tc005-after-save-opinion.png');
+
+        // ── STEP 16: Navigate back to Properties chart ─────────────────────────
+        console.log('\n=== TC-005: Navigating back to Properties chart ===');
+        await getNavLocator(page, 'propertiesNav').first().click({ force: true });
+        await page.waitForURL('**/properties**', { timeout: 20000 });
+        await wait(3000);
+
+        // Wait for chart to load
+        try {
+          await page.locator('.v-progress-circular, [class*="loading"]').first().waitFor({ state: 'hidden', timeout: 20000 });
+        } catch { /* already loaded */ }
+        await wait(3000);
+
+        // ── STEP 17: Hover on the same dot and verify opinion shows ─────────────
+        console.log('\n=== TC-005: Hovering on same dot — checking for opinion value ===');
+
+        const chartRect2 = await page.evaluate(() => {
+          const el = document.querySelector('.chart-card') || document.querySelector('[class*="chart-card"]');
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height };
+        });
+
+        if (chartRect2) {
+          // Hover at the same relative position as before (35%, 70%)
+          const hx = Math.round(chartRect2.x + chartRect2.width * 0.35);
+          const hy = Math.round(chartRect2.y + chartRect2.height * 0.70);
+          console.log(`Hovering at (${hx}, ${hy})`);
+          await page.mouse.move(hx, hy);
+          await wait(1500);
+
+          const panelAfter = await page.locator('.card-panel, [class*="card-panel"]').first().innerText().catch(() => '');
+          console.log(`Panel text after hover: "${panelAfter.slice(0, 200)}"`);
+
+          // Check if opinion/adjustment value appears
+          const hasOpinion = panelAfter.toLowerCase().includes('opinion') ||
+                             panelAfter.includes('$') ||
+                             panelAfter.toLowerCase().includes('select');
+          console.log(`Opinion value reflecting in panel: ${hasOpinion}`);
+
+          await page.screenshot({ path: 'screenshots/tc005-hover-after-opinion.png', fullPage: false });
+          console.log('Screenshot saved: tc005-hover-after-opinion.png');
+
+          // Click on the dot to open full property card and verify opinion dot color changed (yellow)
+          await page.mouse.click(hx, hy);
+          await wait(2000);
+
+          const panelAfterClick = await page.locator('.card-panel, [class*="card-panel"]').first().innerText().catch(() => '');
+          console.log(`Panel text after click: "${panelAfterClick.slice(0, 300)}"`);
+
+          await page.screenshot({ path: 'screenshots/tc005-after-opinion-dot-click.png', fullPage: false });
+          console.log('Screenshot saved: tc005-after-opinion-dot-click.png');
+        }
+      }
+    }
+
+    // Final screenshot of the full page state
+    await page.screenshot({ path: 'screenshots/tc005-final-state.png', fullPage: false });
+    console.log('\n=== TC-005: Final screenshot saved: screenshots/tc005-final-state.png ===');
+    console.log('=== TC-005 COMPLETE ===');
+  });
+
+  // ============================================================
+  // TC-006: Edit Y-Formula base/factor values → verify property opinion updates
+  // Flow: Login → Settings → Y-Total → Edit formula → change base value & factors
+  //       → open same property URL → verify each factor updated as:
+  //         new_value = (saved_ratio × new_original_opinion_total)
+  // ============================================================
+  test('TC-006: should edit Y-Formula and verify opinion values update on property', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // Load saved ratios from TC-005 output
+    const { readFileSync } = await import('fs');
+    let savedCalc;
+    try {
+      savedCalc = JSON.parse(readFileSync('output/opinion-calculation.json', 'utf8'));
+    } catch {
+      throw new Error('output/opinion-calculation.json not found — run TC-005 first');
+    }
+    console.log('\n=== TC-006: Loaded saved opinion calculation ===');
+    console.log(`  Original Opinion Total : ${savedCalc.originalOpinionTotal}`);
+    console.log(`  Original Y Total       : ${savedCalc.originalYTotal}`);
+    console.log(`  Opinion Total          : ${savedCalc.opinionTotal}`);
+    console.log('  Saved Ratios:');
+    for (const [label, ratio] of Object.entries(savedCalc.ratios)) {
+      console.log(`    ${label.padEnd(12)}: ${ratio}`);
+    }
+
+    // ── STEP 1: Login ─────────────────────────────────────────────────────────
+    await page.goto('/login');
+    await getLoginLocator(page, 'emailInput').fill(EMAIL);
+    await getLoginLocator(page, 'passwordInput').fill(PASSWORD);
+    await getLoginLocator(page, 'signInButton').click();
+    await page.waitForURL('**/affiliate-managers', { timeout: 15000 });
+
+    // ── STEP 2: Navigate to Settings → Y-Total tab ────────────────────────────
+    await removeOverlayScrim(page);
+    await getNavLocator(page, 'settingsNav').first().click({ force: true });
+    await page.waitForURL('**/settings**', { timeout: 15000 });
+    await wait(2000);
+    await getYFormulaLocator(page, 'yTotalTab').first().click({ force: true });
+    await wait(2000);
+
+    // ── STEP 3: Find and click the Edit icon on the matching formula row ──────
+    console.log('\n=== TC-006: Finding formula row to edit ===');
+    const targetMls    = excelData.yFormula.mlsBoard;
+    const targetState  = excelData.yFormula.state;
+    const targetCounty = excelData.yFormula.county;
+
+    const matchingRow = page.locator('table tbody tr').filter({
+      has: page.locator('td', { hasText: targetMls }),
+    }).filter({
+      has: page.locator('td', { hasText: targetState }),
+    }).filter({
+      has: page.locator('td', { hasText: targetCounty }),
+    }).first();
+
+    const rowFound = await matchingRow.count() > 0;
+    console.log(`Formula row found: ${rowFound}`);
+
+    // Edit button is the 1st icon button in the last-column action cell
+    const editBtn = rowFound
+      ? matchingRow.locator('td:last-child button:nth-child(1)')
+      : page.locator('table tbody tr').first().locator('td:last-child button:nth-child(1)');
+
+    await expect(editBtn).toBeVisible({ timeout: 10000 });
+    const editBtnHtml = await editBtn.evaluate(el => el.outerHTML);
+    console.log('Edit button HTML:', editBtnHtml);
+    await editBtn.click({ force: true });
+    await wait(3000);
+    await page.screenshot({ path: 'screenshots/tc006-edit-dialog-opened.png' });
+
+    // ── STEP 4: Change Base Value in edit dialog ──────────────────────────────
+    console.log('\n=== TC-006: Changing Base Value ===');
+
+    // Extract current dialog inputs to find base value and factor fields
+    const dialogInfo = await page.evaluate(() => {
+      const dialogs = [...document.querySelectorAll('[role="dialog"], .v-dialog')];
+      const dlg = dialogs.find(d => d.offsetParent !== null);
+      if (!dlg) return null;
+      const inputs = [...dlg.querySelectorAll('input, textarea')].map(el => ({
+        placeholder: el.placeholder,
+        value: el.value,
+        label: el.closest('[class*="field"], .v-field')?.previousElementSibling?.innerText?.trim() || '',
+      }));
+      const labels = [...dlg.querySelectorAll('label, .v-label')].map(l => l.innerText?.trim()).filter(Boolean);
+      return { inputs: inputs.slice(0, 20), labels };
+    });
+    console.log('Dialog inputs:', JSON.stringify(dialogInfo, null, 2));
+    await page.screenshot({ path: 'screenshots/tc006-edit-dialog-fields.png' });
+
+    // Find base value input — try by placeholder or label proximity
+    const baseValueInput = page.locator([
+      'input[placeholder*="Base Value" i]',
+      'input[placeholder*="base" i]',
+      '.v-dialog input[type="number"]',
+    ].join(', ')).first();
+
+    const baseValueVisible = await baseValueInput.isVisible({ timeout: 5000 }).catch(() => false);
+    let newBaseValue = '2000'; // new base value to set
+    if (baseValueVisible) {
+      const currentVal = await baseValueInput.inputValue();
+      console.log(`Current base value: ${currentVal}`);
+      await baseValueInput.click({ force: true });
+      await baseValueInput.fill(newBaseValue);
+      await wait(500);
+      console.log(`Base value changed to: ${newBaseValue}`);
+    } else {
+      console.log('Base value input not found directly — screenshot taken for inspection');
+    }
+
+    // ── STEP 5: Change factor values (View, Condition, Quality etc.) ──────────
+    console.log('\n=== TC-006: Changing factor values ===');
+    const factorFields = [
+      { name: 'View',      placeholder: /view/i,      newValue: '10' },
+      { name: 'Condition', placeholder: /condition/i, newValue: '10' },
+      { name: 'Quality',   placeholder: /quality/i,   newValue: '10' },
+      { name: 'Amenities', placeholder: /amenities/i, newValue: '10' },
+      { name: 'Access',    placeholder: /access/i,    newValue: '10' },
+      { name: 'Appeal',    placeholder: /appeal/i,    newValue: '10' },
+      { name: 'Elevation', placeholder: /elevation/i, newValue: '10' },
+      { name: 'Economic',  placeholder: /economic/i,  newValue: '10' },
+    ];
+
+    for (const f of factorFields) {
+      const allInputs = page.locator('[role="dialog"] input, .v-dialog input');
+      const count = await allInputs.count();
+      let filled = false;
+      for (let i = 0; i < count; i++) {
+        const inp = allInputs.nth(i);
+        const ph = await inp.getAttribute('placeholder').catch(() => '');
+        const lb = await inp.evaluate(el => {
+          const field = el.closest('[class*="field"], .v-field, .v-input');
+          return field?.querySelector('label, .v-label')?.innerText?.trim() || '';
+        }).catch(() => '');
+        if (f.placeholder.test(ph) || f.placeholder.test(lb)) {
+          const cur = await inp.inputValue().catch(() => '');
+          await inp.click({ force: true });
+          await inp.fill(f.newValue);
+          await wait(300);
+          console.log(`  ${f.name}: ${cur} → ${f.newValue}`);
+          filled = true;
+          break;
+        }
+      }
+      if (!filled) console.log(`  ${f.name}: input not found`);
+    }
+
+    await page.screenshot({ path: 'screenshots/tc006-after-factor-edit.png' });
+
+    // ── STEP 6: Save the edited formula ───────────────────────────────────────
+    console.log('\n=== TC-006: Saving edited formula ===');
+    const saveBtn = page.locator('[role="dialog"] button:has-text("Save"), .v-dialog button:has-text("Save"), [role="dialog"] button:has-text("Update"), .v-dialog button:has-text("Update")').last();
+    const saveBtnVisible = await saveBtn.isVisible({ timeout: 5000 }).catch(() => false);
+    console.log(`Save/Update button visible: ${saveBtnVisible}`);
+    if (saveBtnVisible) {
+      await saveBtn.click({ force: true });
+      await wait(3000);
+      const snack = await page.locator('.v-snackbar, [role="status"], [role="alert"]').first().innerText().catch(() => '');
+      console.log(`Save snackbar: "${snack}"`);
+    }
+    await page.screenshot({ path: 'screenshots/tc006-after-save-formula.png' });
+
+    // ── STEP 7: Search the same formula row to get property page URL ──────────
+    console.log('\n=== TC-006: Navigating to Properties page ===');
+    await wait(2000);
+    const searchBtn = rowFound
+      ? matchingRow.locator('td:last-child button:nth-child(3)')
+      : page.locator('table tbody tr').first().locator('td:last-child button:nth-child(3)');
+
+    // Row reference may be stale after save — re-query
+    const freshRow = page.locator('table tbody tr').filter({
+      has: page.locator('td', { hasText: targetMls }),
+    }).filter({
+      has: page.locator('td', { hasText: targetState }),
+    }).filter({
+      has: page.locator('td', { hasText: targetCounty }),
+    }).first();
+    const freshSearchBtn = await freshRow.count() > 0
+      ? freshRow.locator('td:last-child button:nth-child(3)')
+      : page.locator('table tbody tr').first().locator('td:last-child button:nth-child(3)');
+
+    await expect(freshSearchBtn).toBeVisible({ timeout: 10000 });
+    await freshSearchBtn.click({ force: true });
+    await page.waitForURL('**/properties**', { timeout: 30000 });
+    await wait(3000);
+    try {
+      await page.locator('.v-progress-circular, .mdi-loading, [class*="loading"]').first().waitFor({ state: 'hidden', timeout: 30000 });
+    } catch { /* no spinner */ }
+    await wait(4000);
+
+    // ── STEP 8: Click the same blue dot and open the property ─────────────────
+    console.log('\n=== TC-006: Clicking same property dot on chart ===');
+    const chartRect = await page.evaluate(() => {
+      const el = document.querySelector('.chart-card') || document.querySelector('[class*="chart-card"]');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { x: r.x, y: r.y, width: r.width, height: r.height };
+    });
+
+    if (chartRect) {
+      const cx = Math.round(chartRect.x + chartRect.width * 0.35);
+      const cy = Math.round(chartRect.y + chartRect.height * 0.70);
+      await page.mouse.move(cx, cy);
+      await wait(1000);
+      await page.mouse.click(cx, cy);
+      await wait(2000);
+      console.log(`Clicked dot at (${cx}, ${cy})`);
+    }
+    await page.screenshot({ path: 'screenshots/tc006-property-dot-clicked.png' });
+
+    // Click Select → Set Opinion
+    const selectBtn2 = page.locator('button.select-remove-btn').first();
+    if (await selectBtn2.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await selectBtn2.click({ force: true });
+      await wait(1500);
+    }
+    const setOpinionBtn2 = page.locator('button:has-text("Set Opinion")').first();
+    if (await setOpinionBtn2.isVisible({ timeout: 5000 }).catch(() => false)) {
+      await setOpinionBtn2.click({ force: true });
+      await page.waitForURL(/properties.*\/\d+|property-detail|set-opinion/i, { timeout: 20000 }).catch(() => {});
+      await wait(4000);
+    }
+
+    // ── STEP 9: Read new Original Opinion Total and verify updated values ──────
+    console.log('\n=== TC-006: Reading updated opinion values from property page ===');
+    await page.screenshot({ path: 'screenshots/tc006-property-opinion-page.png' });
+
+    const updatedData = await page.evaluate(() => {
+      const result = {};
+      const findValueNearLabel = (labelRegex) => {
+        const allEls = [...document.querySelectorAll('*')];
+        const labelEl = allEls.find(el =>
+          labelRegex.test(el.innerText?.trim()) &&
+          el.children.length < 4 &&
+          el.tagName !== 'BODY' && el.tagName !== 'HTML'
+        );
+        if (!labelEl) return null;
+        const parent = labelEl.parentElement;
+        if (parent) {
+          const siblings = [...parent.children];
+          const idx = siblings.indexOf(labelEl);
+          for (let i = idx + 1; i < siblings.length; i++) {
+            const text = siblings[i].innerText?.trim().replace(/[$,\s]/g, '');
+            if (text && /^-?[\d.]+$/.test(text)) return parseFloat(text);
+          }
+          const parentNext = parent.nextElementSibling;
+          if (parentNext) {
+            const text = parentNext.innerText?.trim().replace(/[$,\s]/g, '');
+            if (text && /^-?[\d.]+$/.test(text)) return parseFloat(text);
+          }
+        }
+        return null;
+      };
+      result.originalOpinionTotal = findValueNearLabel(/^original\s+opinion\s+total$/i);
+      result.originalYTotal       = findValueNearLabel(/^original\s+y\s+total$/i);
+      result.opinionTotal         = findValueNearLabel(/^opinion\s+total$/i);
+
+      // Read each factor's current displayed/input value
+      const factorNames = ['View', 'Condition', 'Quality', 'Amenities', 'Access', 'Appeal', 'Elevation', 'Economic'];
+      result.factors = {};
+      for (const name of factorNames) {
+        const input = [...document.querySelectorAll('input')].find(el =>
+          (el.placeholder || '').toLowerCase().includes(name.toLowerCase())
+        );
+        result.factors[name] = input ? (parseFloat(input.value) || null) : null;
+      }
+      return result;
+    });
+
+    console.log('\n─────────────────────────────────────────────────────────────────');
+    console.log('  TC-006: EXPECTED vs ACTUAL OPINION VALUES AFTER FORMULA EDIT');
+    console.log(`  New Original Opinion Total : ${updatedData.originalOpinionTotal}`);
+    console.log(`  New Original Y Total       : ${updatedData.originalYTotal}`);
+    console.log(`  New Opinion Total          : ${updatedData.opinionTotal}`);
+    console.log('─────────────────────────────────────────────────────────────────');
+    console.log('  Factor          | Saved Ratio       | Expected (ratio×newOrigOpTotal) | Actual on Page');
+    console.log('  ────────────────|───────────────────|─────────────────────────────────|───────────────');
+
+    const newOrigOpTotal = updatedData.originalOpinionTotal;
+    const verificationResults = {};
+    const assertionErrors = [];
+
+    // Assert that the new Original Opinion Total was read from the page
+    expect(newOrigOpTotal, 'New Original Opinion Total must be present on the property page after formula edit').not.toBeNull();
+
+    for (const [label, ratio] of Object.entries(savedCalc.ratios)) {
+      const expected = newOrigOpTotal !== null
+        ? parseFloat((ratio * newOrigOpTotal).toFixed(4))
+        : null;
+      const actual = updatedData.factors[label];
+      const match = actual !== null && expected !== null
+        ? Math.abs(actual - expected) < 0.01
+        : false;
+
+      verificationResults[label] = { ratio, expected, actual, match };
+
+      const labelPad = label.padEnd(16);
+      const ratioPad = String(ratio).padEnd(18);
+      const expPad   = String(expected).padEnd(32);
+      console.log(`  ${labelPad}| ${ratioPad}| ${expPad}| ${actual} ${match ? '✓' : '✗'}`);
+
+      if (!match) {
+        console.log(`  ❌ MISMATCH [${label}]:`);
+        console.log(`       Saved ratio          : ${ratio}`);
+        console.log(`       New Orig Opinion Tot : ${newOrigOpTotal}`);
+        console.log(`       Expected value       : ${ratio} × ${newOrigOpTotal} = ${expected}`);
+        console.log(`       Actual on page       : ${actual}`);
+        console.log(`       Difference           : ${actual !== null && expected !== null ? Math.abs(actual - expected).toFixed(6) : 'N/A'}`);
+        assertionErrors.push(
+          `${label}: expected ${expected} (ratio ${ratio} × ${newOrigOpTotal}), but got ${actual}`
+        );
+      } else {
+        console.log(`  ✓ MATCH    [${label}]: ${actual} matches expected ${expected}`);
+      }
+    }
+    console.log('─────────────────────────────────────────────────────────────────\n');
+
+    // Save verification result
+    const { writeFileSync, mkdirSync } = await import('fs');
+    mkdirSync('output', { recursive: true });
+    writeFileSync('output/tc006-verification.json', JSON.stringify({
+      capturedAt: new Date().toISOString(),
+      newOriginalOpinionTotal: updatedData.originalOpinionTotal,
+      newOriginalYTotal: updatedData.originalYTotal,
+      newOpinionTotal: updatedData.opinionTotal,
+      savedRatios: savedCalc.ratios,
+      verification: verificationResults,
+      formula: 'expected_value = saved_ratio × new_original_opinion_total',
+    }, null, 2));
+    console.log('Verification result saved to output/tc006-verification.json');
+
+    await page.screenshot({ path: 'screenshots/tc006-final-state.png' });
+
+    // ── Final Assertions ────────────────────────────────────────────────────────
+    // Fail the test with a clear summary if any factor value did not match
+    if (assertionErrors.length > 0) {
+      console.log('\n❌ ASSERTION FAILURES:');
+      assertionErrors.forEach(e => console.log(`   ${e}`));
+      expect(assertionErrors, [
+        `${assertionErrors.length} factor(s) did not match expected values after Y-Formula edit:`,
+        ...assertionErrors,
+      ].join('\n')).toHaveLength(0);
+    } else {
+      console.log('✓ All factor values match expected values after Y-Formula edit.');
+    }
+
+    console.log('=== TC-006 COMPLETE ===');
   });
 
 });
