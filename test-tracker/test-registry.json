@@ -1,0 +1,96 @@
+{
+  "tests": [
+    {
+      "id": "TC-001",
+      "name": "should login successfully",
+      "flow": "Login",
+      "steps": [
+        "1. Navigate to /login",
+        "2. Fill email: zaid.m@simformsolutions.com",
+        "3. Fill password: Test@123",
+        "4. Click Sign in button",
+        "5. Verify redirect to /affiliate-managers",
+        "6. Verify sidebar navigation visible"
+      ],
+      "specFile": "tests/crex-agent.spec.js",
+      "status": "not-started",
+      "lastRun": null,
+      "runCount": 0,
+      "errorCount": 0,
+      "createdAt": "2026-03-29T09:25:58.501Z"
+    },
+    {
+      "id": "TC-002",
+      "name": "should verify login page elements",
+      "flow": "Login",
+      "steps": [
+        "1. Navigate to /login",
+        "2. Verify email input visible",
+        "3. Verify password input visible",
+        "4. Verify remember checkbox visible",
+        "5. Verify forgot password link visible",
+        "6. Verify Sign in button visible",
+        "7. Verify page heading \"Login to your account\""
+      ],
+      "specFile": "tests/crex-agent.spec.js",
+      "status": "not-started",
+      "lastRun": null,
+      "runCount": 0,
+      "errorCount": 0,
+      "createdAt": "2026-03-29T09:25:58.503Z"
+    },
+    {
+      "id": "TC-003",
+      "name": "should navigate to Properties and open Market Filters",
+      "flow": "Properties - Market Filters",
+      "steps": [
+        "1. Login with credentials",
+        "2. Click Properties in sidebar",
+        "3. Verify Properties page URL",
+        "4. Verify Market Filters dialog opens",
+        "5. Verify filter tabs (Market Filters, Market Features, Y-Factor)",
+        "6. Verify all dropdown fields present",
+        "7. Verify date range inputs",
+        "8. Verify price range inputs",
+        "9. Verify Cancel and Next buttons"
+      ],
+      "specFile": "tests/crex-agent.spec.js",
+      "status": "not-started",
+      "lastRun": null,
+      "runCount": 0,
+      "errorCount": 0,
+      "createdAt": "2026-03-29T09:25:58.504Z"
+    },
+    {
+      "id": "TC-004",
+      "name": "should select values in Market Filters dropdowns",
+      "flow": "Properties - Market Filters",
+      "steps": [
+        "1. Login and navigate to Properties",
+        "2. Open Market Filters dialog",
+        "3. Select MLS Board (first option)",
+        "4. Wait for State dropdown to load",
+        "5. Select State",
+        "6. Wait for County dropdown to load",
+        "7. Select County",
+        "8. Select City",
+        "9. Select Zip Code",
+        "10. Select Property Status",
+        "11. Verify all selected values displayed",
+        "12. Fill Min Price and Max Price",
+        "13. Verify Next button is enabled"
+      ],
+      "specFile": "tests/crex-agent-filters.spec.js",
+      "status": "not-started",
+      "lastRun": null,
+      "runCount": 0,
+      "errorCount": 0,
+      "createdAt": "2026-03-29T09:25:58.505Z"
+    }
+  ],
+  "flows": [
+    "Login",
+    "Properties - Market Filters"
+  ],
+  "lastUpdated": "2026-03-29T09:27:04.212Z"
+}

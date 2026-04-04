@@ -1,0 +1,95 @@
+import { test, expect } from '@playwright/test';
+import { locators as loginLocators, getLocator as getLoginLocator } from '../locators/login-page.locators.js';
+import { getLocator as getNavLocator } from '../locators/sidebar-nav.locators.js';
+
+// Credentials
+const EMAIL = 'zaid.m@simformsolutions.com';
+const PASSWORD = 'Test@123';
+
+test.describe('CREX Agent - Login & Properties Flow', () => {
+
+  test('should login successfully', async ({ page }) => {
+    await page.goto('/login');
+
+    // Fill login form
+    await getLoginLocator(page, 'emailInput').fill(EMAIL);
+    await getLoginLocator(page, 'passwordInput').fill(PASSWORD);
+
+    // Verify Sign in button exists
+    await expect(getLoginLocator(page, 'signInButton')).toBeVisible();
+
+    // Click Sign in
+    await getLoginLocator(page, 'signInButton').click();
+
+    // Wait for navigation after login
+    await page.waitForURL('**/affiliate-managers', { timeout: 15000 });
+
+    // Verify we are logged in — sidebar should be visible
+    await expect(getNavLocator(page, 'propertiesNav')).toBeVisible();
+  });
+
+  test('should navigate to Properties and open Market Filters', async ({ page }) => {
+    // Login first
+    await page.goto('/login');
+    await getLoginLocator(page, 'emailInput').fill(EMAIL);
+    await getLoginLocator(page, 'passwordInput').fill(PASSWORD);
+    await getLoginLocator(page, 'signInButton').click();
+    await page.waitForURL('**/affiliate-managers', { timeout: 15000 });
+
+    // Click Properties in sidebar
+    await getNavLocator(page, 'propertiesNav').click();
+    await page.waitForTimeout(3000);
+
+    // Verify we are on Properties page
+    await expect(page).toHaveURL(/properties/);
+
+    // Market Filters dialog should appear — verify it via the dialog heading
+    const dialog = page.locator('dialog, [role="dialog"], .v-dialog');
+    await expect(dialog).toBeVisible({ timeout: 10000 });
+
+    // Verify dialog heading
+    await expect(page.getByRole('heading', { name: 'Market Filters', level: 4 })).toBeVisible();
+
+    // Verify filter tab headings are present
+    await expect(page.getByText('Market Features Filters')).toBeVisible();
+    await expect(page.getByText('Y-Factor Filters')).toBeVisible();
+
+    // Verify MLS Board and Property Status dropdowns (always enabled)
+    await expect(page.locator('input[placeholder="Select MLS Board"]')).toBeVisible();
+    await expect(page.locator('input[placeholder="Select property status"]')).toBeVisible();
+
+    // Verify filter field labels are present
+    await expect(page.getByText('MLS Board *')).toBeVisible();
+    await expect(page.getByText('State *')).toBeVisible();
+    await expect(page.getByText('County *')).toBeVisible();
+    await expect(page.getByText('School District')).toBeVisible();
+    await expect(page.getByText('Zip Code')).toBeVisible();
+    await expect(page.getByText('Property Status')).toBeVisible();
+    await expect(page.getByText('Date Range *')).toBeVisible();
+    await expect(page.getByText('Price Range')).toBeVisible();
+
+    // Verify date inputs
+    await expect(page.getByPlaceholder('From Date')).toBeVisible();
+    await expect(page.getByPlaceholder('To Date')).toBeVisible();
+
+    // Verify price inputs
+    await expect(page.getByPlaceholder('Min Price')).toBeVisible();
+    await expect(page.getByPlaceholder('Max Price')).toBeVisible();
+
+    // Verify action buttons
+    await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Next' })).toBeVisible();
+  });
+
+  test('should verify login page elements', async ({ page }) => {
+    await page.goto('/login');
+
+    // Verify all login page elements
+    await expect(getLoginLocator(page, 'emailInput')).toBeVisible();
+    await expect(getLoginLocator(page, 'passwordInput')).toBeVisible();
+    await expect(getLoginLocator(page, 'rememberCheckbox')).toBeVisible();
+    await expect(getLoginLocator(page, 'forgotPasswordLink')).toBeVisible();
+    await expect(getLoginLocator(page, 'signInButton')).toBeVisible();
+    await expect(getLoginLocator(page, 'pageHeading')).toHaveText('Login to your account');
+  });
+});

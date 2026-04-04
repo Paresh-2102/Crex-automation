@@ -1,0 +1,13 @@
+{
+  "mlsBoard": "Florida Gulf Coast MLS",
+  "state": "Florida",
+  "county": "Alachua",
+  "city": "Alachua",
+  "schoolDistrict": "No data available",
+  "zipCode": "32605",
+  "propertyStatus": "Closed",
+  "dateRangeFrom": "Mar 28, 2025",
+  "dateRangeTo": "Mar 28, 2026",
+  "minPrice": "100000",
+  "maxPrice": "500000"
+}

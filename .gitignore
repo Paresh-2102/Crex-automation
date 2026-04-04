@@ -1,0 +1,19 @@
+# Environment secrets
+.env
+
+# Dependencies
+node_modules/
+
+# Playwright artifacts
+playwright-report/
+test-results/
+screenshots/
+
+# Output / extraction files (generated at runtime)
+output/
+
+# Logs
+*.log
+run-output*.txt
+test-output*.txt
+run-output-yformula.txt
