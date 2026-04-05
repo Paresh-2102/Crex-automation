@@ -514,7 +514,7 @@ test.describe('CREX Agent - Complete Property Filter Flow', () => {
     await expect(page).toHaveURL(/properties|property|detail/);
   });
 
-  test.skip('TC-004: should create Y-formula from Settings > Y-Total', async ({ page }) => {
+  test.only('TC-004: should create Y-formula from Settings > Y-Total', async ({ page }) => {
     // Increase viewport height so the dialog footer (Next/Add buttons) is always visible
     await page.setViewportSize({ width: 1280, height: 1024 });
 
