@@ -106,3 +106,50 @@ export function extractNumber(text, pattern) {
   const match = text.match(pattern);
   return match ? parseFloat(match[1].replace(/,/g, '')) : null;
 }
+
+// ─── Opinion ID extractor ─────────────────────────────────────────────────────
+
+/**
+ * Extract the opinion ID from a save-opinion API response body.
+ * @param {object|null} body
+ * @returns {number|string|null}
+ */
+export function extractOpinionId(body) {
+  if (!body) return null;
+  return body.id ?? body.data?.id ?? body.opinion?.id ?? body.opinionId ?? null;
+}
+
+// ─── Opinion result file helpers ──────────────────────────────────────────────
+
+export function saveAdminOpinionResult(data) {
+  saveJson('output/admin-opinion-result.json', data);
+}
+
+export function saveAfmOpinionResult(data) {
+  saveJson('output/affiliate-manager-opinion-result.json', data);
+}
+
+export function saveSubAgentOpinionResult(data) {
+  saveJson('output/sub-agent-opinion-result.json', data);
+}
+
+/**
+ * Merge new fields into the shared opinion data file.
+ * Creates the file on first call.
+ * @param {object} data
+ */
+export function saveSharedOpinionData(data) {
+  const filePath = 'output/shared-opinion-data.json';
+  let existing = {};
+  try { existing = loadJson(filePath); } catch { /* first write */ }
+  saveJson(filePath, { ...existing, ...data, updatedAt: new Date().toISOString() });
+}
+
+/**
+ * Read the shared opinion data file written by previous tests.
+ * Returns an empty object if the file does not exist yet.
+ * @returns {object}
+ */
+export function readSharedOpinionData() {
+  try { return loadJson('output/shared-opinion-data.json'); } catch { return {}; }
+}

@@ -546,4 +546,79 @@ export class YFormulaPage extends BasePage {
     getAddNewFormulaButtonLocator() {
         return this._addNewFormulaBtn();
     }
+
+    // ─── Retry helpers for opinion flow ─────────────────────────────────────────
+
+    /**
+     * Click the Y-Total tab, reloading the page if the tab is not immediately visible.
+     * Handles scenarios where the settings page loads slowly.
+     */
+    async clickYTotalTabWithRetry() {
+        const tab = this._yTotalTab();
+        const visible = await tab.isVisible({ timeout: 3000 }).catch(() => false);
+        if (!visible) {
+            console.log('  ⚠  Y-Total tab not found — reloading settings page...');
+            await this.page.reload({ waitUntil: 'domcontentloaded' });
+            await this.wait(2000);
+            await tab.waitFor({ state: 'visible', timeout: 10000 });
+        }
+        await tab.click({ force: true });
+        await this.wait(2000);
+    }
+
+    /**
+     * Update the Base Value field inside an open edit dialog, then save it.
+     * Falls back to wizard-style navigation (Next → Save/Add) if simple Save is absent.
+     * @param {string} newValue
+     */
+    async updateBaseValueAndSave(newValue) {
+        const baseValueInput = this.page.locator(
+            '.v-dialog:visible input[placeholder*="Base Value" i], ' +
+            '.v-dialog:visible input[placeholder*="base value" i], ' +
+            '.v-dialog:visible input[type="number"]'
+        ).first();
+        await baseValueInput.waitFor({ state: 'visible', timeout: 10000 });
+        await baseValueInput.scrollIntoViewIfNeeded().catch(() => {});
+        await baseValueInput.click({ clickCount: 3, force: true });
+        await baseValueInput.fill('');
+        await this.wait(200);
+        await baseValueInput.fill(newValue);
+        await this.wait(500);
+        console.log(`  ✓ Base Value updated to: ${newValue}`);
+
+        // Try simple Save/Update button first
+        const saveBtn = this.page.locator(
+            '.v-dialog:visible button:has-text("Save"), ' +
+            '.v-dialog:visible button:has-text("Update"), ' +
+            '.v-dialog:visible button:has-text("Confirm")'
+        ).first();
+        if (await saveBtn.isVisible({ timeout: 4000 }).catch(() => false)) {
+            await saveBtn.click({ force: true });
+            await this.wait(3000);
+            console.log('  ✓ Saved via Save/Update button');
+            return;
+        }
+
+        // Wizard-style: Next → Next → Add/Save
+        const nextBtn = this.page.locator('.v-dialog:visible button:has-text("Next")').first();
+        if (await nextBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+            await nextBtn.click({ force: true });
+            await this.wait(1500);
+            await nextBtn.click({ force: true }).catch(() => {});
+            await this.wait(1500);
+            const addBtn = this.page.locator(
+                '.v-dialog:visible button:has-text("Add"), .v-dialog:visible button:has-text("Save")'
+            ).last();
+            if (await addBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+                await addBtn.click({ force: true });
+                await this.wait(3000);
+                console.log('  ✓ Saved via wizard Next → Add');
+                return;
+            }
+        }
+
+        await this.page.keyboard.press('Escape');
+        await this.wait(1000);
+        console.log('  ⚠  Dialog closed via Escape (no save button found)');
+    }
 }

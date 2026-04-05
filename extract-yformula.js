@@ -265,7 +265,7 @@ async function run() {
       county: await selectFirstDropdownOption(page, 'Select County'),
     };
 
-    const baseValueInput = page.locator('.v-dialog input[placeholder="Enter base value"]').first();
+    const baseValueInput = page.locator('.v-dialog input[placeholder="fit"]').first();
     if (await baseValueInput.count() > 0) {
       await baseValueInput.fill('100');
       await wait(500);
