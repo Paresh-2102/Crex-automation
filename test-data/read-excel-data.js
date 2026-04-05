@@ -17,13 +17,24 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const EXCEL_PATH = path.join(__dirname, 'filter-input-template.xlsx');
+// Allow overriding the path via environment variable (e.g. EXCEL_FILE_PATH=C:\path\to\file.xlsx npx playwright test)
+const EXCEL_PATH = process.env.EXCEL_FILE_PATH 
+  ? path.resolve(process.env.EXCEL_FILE_PATH)
+  : path.join(__dirname, 'filter-input-template.xlsx');
+
+import fs from 'fs';
 
 /**
  * Read all test data from the Excel template file.
  * Returns an object with marketFilters, marketFeatures, and yFactors.
  */
 export async function readExcelData(filePath = EXCEL_PATH) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`\n❌ ERROR: Excel file not found!\nLooks like the file is missing at: ${filePath}\nPlease check the path or use EXCEL_FILE_PATH to point to your actual spreadsheet.\n`);
+  }
+  
+  console.log(`\n📊 Loading Excel Test Data from: ${filePath}\n`);
+
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(filePath);
 

@@ -105,8 +105,8 @@ export const locators = {
   },
 
   baseValueInput: {
-    selector: 'Enter base value',
-    method: 'getByPlaceholder',
+    selector: 'input[placeholder="Enter base value"], div[placeholder="Enter base value"] input, .v-dialog [placeholder="Enter base value"] input',
+    method: 'locator',
     fallback: '.v-dialog input[placeholder="Enter base value"]',
   },
 

@@ -8,6 +8,7 @@ node_modules/
 playwright-report/
 test-results/
 screenshots/
+playwright/.auth/
 
 # Output / extraction files (generated at runtime)
 output/

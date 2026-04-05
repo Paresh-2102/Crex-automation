@@ -1,5 +1,10 @@
 // @ts-check
 import { defineConfig, devices } from '@playwright/test';
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Read from default ".env" file.
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 export default defineConfig({
   testDir: './tests',
@@ -10,16 +15,21 @@ export default defineConfig({
   reporter: 'html',
   timeout: 60000,
   use: {
-    baseURL: 'https://stage.crexagent.com',
-    trace: 'on-first-retry',
+    baseURL: process.env.BASE_URL || 'https://stage.crexagent.com',
+    trace: 'on',
     screenshot: 'only-on-failure',
     headless: false,
     viewport: { width: 1280, height: 800 },
   },
   projects: [
+    { name: 'setup', testMatch: /.*\.setup\.js/ },
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: { 
+        ...devices['Desktop Chrome'],
+        storageState: 'playwright/.auth/user.json',
+      },
+      dependencies: ['setup'],
     },
   ],
 });

@@ -44,9 +44,8 @@ export const locators = {
   // Element: <div> | v-list-item
   // Label: Properties
   propertiesNav: {
-    selector: 'Properties',
-    method: 'getByText',
-    fallback: 'nav .v-list-item:has-text("Properties")',
+    selector: 'nav .v-list-item:has-text("Properties")',
+    method: 'locator',
   },
 
   // Saved Opinions navigation item in left sidebar
@@ -71,9 +70,8 @@ export const locators = {
   // Element: <div> | v-list-item
   // Label: Settings
   settingsNav: {
-    selector: 'Settings',
-    method: 'getByText',
-    fallback: 'nav .v-list-item:has-text("Settings")',
+    selector: 'nav .v-list-item:has-text("Settings")',
+    method: 'locator',
   },
 
   // Transactions navigation item in left sidebar
